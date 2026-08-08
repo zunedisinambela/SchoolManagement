@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Activities;
 
+use App\Enums\Permission;
 use App\Filament\Resources\Activities\Pages\ListActivities;
 use App\Filament\Resources\Activities\Pages\ViewActivity;
 use App\Filament\Resources\Activities\Schemas\ActivityInfolist;
@@ -66,7 +67,7 @@ class ActivityResource extends Resource
 
     public static function canAccess(): bool
     {
-        return (bool) Filament::auth()->user()?->is_admin;
+        return (bool) Filament::auth()->user()?->can(Permission::LihatLogAktivitas->value);
     }
 
     public static function canCreate(): bool

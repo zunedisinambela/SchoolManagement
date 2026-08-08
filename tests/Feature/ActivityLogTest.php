@@ -18,7 +18,7 @@ class ActivityLogTest extends TestCase
 
     protected function admin(): User
     {
-        return User::factory()->create(['is_admin' => true]);
+        return User::factory()->superAdmin()->create();
     }
 
     public function test_login_is_recorded_with_the_causer(): void
@@ -100,7 +100,7 @@ class ActivityLogTest extends TestCase
 
     public function test_non_admin_cannot_access_the_resource(): void
     {
-        $this->actingAs(User::factory()->create(['is_admin' => false]));
+        $this->actingAs(User::factory()->create());
 
         $this->assertFalse(ActivityResource::canAccess());
 

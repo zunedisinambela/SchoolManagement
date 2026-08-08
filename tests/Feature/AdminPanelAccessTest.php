@@ -15,14 +15,14 @@ class AdminPanelAccessTest extends TestCase
 
     public function test_an_admin_can_open_the_panel(): void
     {
-        $this->actingAs(User::factory()->create(['is_admin' => true]));
+        $this->actingAs(User::factory()->superAdmin()->create());
 
         $this->get('/admin')->assertSuccessful();
     }
 
     public function test_a_non_admin_is_denied(): void
     {
-        $this->actingAs(User::factory()->create(['is_admin' => false]));
+        $this->actingAs(User::factory()->create());
 
         $this->get('/admin')->assertForbidden();
     }
@@ -37,7 +37,7 @@ class AdminPanelAccessTest extends TestCase
      */
     public function test_access_is_denied_for_an_unrecognised_panel(): void
     {
-        $admin = User::factory()->create(['is_admin' => true]);
+        $admin = User::factory()->superAdmin()->create();
 
         // A panel's id() may only be set once, so a stub stands in for the
         // hypothetical second panel rather than a real registered one.

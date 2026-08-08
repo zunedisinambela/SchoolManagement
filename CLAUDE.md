@@ -12,9 +12,10 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Database | SQLite — `database/database.sqlite` |
 | Frontend | Vite |
 | Audit log | spatie/laravel-activitylog 5 |
+| Role & permission | spatie/laravel-permission 8 |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 
-Belum ada modul aplikasi — baru skeleton, panel admin, dan audit log. Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`) plus `activity_log`.
+Belum ada modul aplikasi — baru skeleton, panel admin, audit log, dan otorisasi. Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, plus lima tabel role/permission.
 
 ## Perintah
 
@@ -45,27 +46,72 @@ Kalau dilewat, panel tampil tanpa CSS.
 
 ### Akses panel
 
-`App\Models\User` implement `Filament\Models\Contracts\FilamentUser`. Hanya user dengan `is_admin = true` yang bisa membuka `/admin`; sisanya dapat HTTP 403.
+`App\Models\User` implement `Filament\Models\Contracts\FilamentUser`. Yang menentukan akses adalah **permission** `akses-panel-admin`, bukan role. Tanpa itu → HTTP 403.
 
 ```php
 public function canAccessPanel(Panel $panel): bool
 {
     return match ($panel->getId()) {
-        'admin' => (bool) $this->is_admin,
+        'admin' => $this->can(Permission::AksesPanelAdmin->value),
         default => false,
     };
 }
 ```
 
-Cabang `default` sengaja `false`. Kalau nanti menambah panel kedua (misal panel guru atau siswa), panel itu **tertutup sampai ditambahkan eksplisit** ke `match` — tidak diam-diam ikut aturan admin. Jangan diganti jadi `return $this->is_admin` polos.
+Dua hal yang sengaja begini, jangan "disederhanakan":
 
-Resource Log Aktivitas punya lapis kedua lewat `canAccess()`-nya sendiri, juga berdasarkan `is_admin`.
+- **Cek permission, bukan `hasRole('super-admin')`.** Kalau nanti role `guru` perlu masuk panel, cukup beri permission-nya — tidak perlu menyentuh model User lagi.
+- **Cabang `default` = `false`.** Panel kedua (guru, siswa, wali murid) **tertutup sampai ditambahkan eksplisit** ke `match`, tidak diam-diam ikut aturan admin.
 
-Menaikkan user jadi admin:
+## Otorisasi (spatie/laravel-permission)
+
+Role dan permission disimpan di tabel `roles`, `permissions`, `model_has_roles`, `model_has_permissions`, `role_has_permissions`. Guard-nya `web`, sama dengan guard panel admin.
+
+### Nama role & permission ada di enum
+
+Jangan tulis string mentah. Sumber kebenarannya:
+
+| File | Isi |
+|---|---|
+| `app/Enums/Role.php` | `SuperAdmin = 'super-admin'` |
+| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas` |
+
+```php
+$user->can(Permission::LihatLogAktivitas->value);
+$user->assignRole(Role::SuperAdmin->value);
+```
+
+**Menambah permission baru = dua langkah.** Tambah case di enum, lalu jalankan `php artisan db:seed --class=RolePermissionSeeder`. Case enum tanpa baris di tabel `permissions` akan selalu `false`. Tes `test_every_enum_permission_is_seeded` menangkap kalau langkah kedua terlewat.
+
+### super-admin
+
+Role `super-admin` **tidak memegang permission apa pun secara eksplisit**. Dia lolos semua pengecekan lewat `Gate::before` di `AppServiceProvider`:
+
+```php
+Gate::before(fn (User $user) => $user->hasRole(Role::SuperAdmin->value) ? true : null);
+```
+
+Wajib `null`, bukan `false`, untuk user non-super-admin. `false` akan menghentikan gate lebih awal dan menolak permission yang sebenarnya dimiliki user itu.
+
+Konsekuensinya: jangan pernah memberi `super-admin` ke user biasa. Role itu melewati **semua** policy, bukan cuma permission yang terdaftar.
+
+### Menaikkan hak user
 
 ```bash
-php artisan tinker --execute="App\Models\User::where('email','x@y.com')->update(['is_admin' => true]);"
+php artisan permission:create-role guru
+php artisan permission:create-permission siswa.lihat
+php artisan tinker --execute="App\Models\User::where('email','x@y.com')->first()->assignRole('super-admin');"
 ```
+
+Setelah mengubah role/permission langsung lewat SQL (bukan lewat model), bersihkan cache:
+
+```bash
+php artisan permission:cache-reset
+```
+
+### Kolom `is_admin` sudah tidak ada
+
+Dulu akses panel ditentukan kolom boolean `users.is_admin`. Migrasi `2026_08_09_062000_move_is_admin_to_super_admin_role` memindahkan setiap user `is_admin = true` ke role `super-admin` lalu membuang kolomnya. Kalau menemukan referensi `is_admin` di kode atau dokumen, itu sisa yang terlewat.
 
 ## Seeder
 
@@ -75,11 +121,11 @@ php artisan tinker --execute="App\Models\User::where('email','x@y.com')->update(
 |---|---|
 | Email | `admin@admin.com` |
 | Password | `admin` |
-| `is_admin` | `true` |
+| Role | `super-admin` |
 
-`AdminUserSeeder` pakai `updateOrCreate` dengan email sebagai kunci, jadi aman dijalankan berulang tanpa `migrate:fresh`.
+Urutannya penting: `RolePermissionSeeder` membuat role dan permission, baru `AdminUserSeeder` memberikan rolenya. Keduanya idempoten (`findOrCreate` / `updateOrCreate`), aman dijalankan berulang tanpa `migrate:fresh`.
 
-**Kredensial dev saja.** Jangan pernah jalankan seeder ini di produksi.
+**Kredensial dev saja.** Jangan pernah jalankan `AdminUserSeeder` di produksi. `RolePermissionSeeder` aman — isinya cuma role dan permission, tanpa user.
 
 ## Audit log (spatie/laravel-activitylog)
 
@@ -124,7 +170,7 @@ Tidak perlu mengubah apa pun di resource Filament — tabel log otomatis menampi
 
 `app/Filament/Resources/Activities/` sengaja tidak punya page `create`/`edit`, dan `canCreate()`/`canEdit()`/`canDelete()` semuanya `false`. Audit trail yang bisa disunting tidak ada gunanya — jangan dibuka.
 
-Akses dibatasi lewat `canAccess()` yang mengecek `is_admin`.
+Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas`. Terpisah dari `akses-panel-admin`, jadi user bisa dimasukkan ke panel tanpa sekalian diberi jejak audit.
 
 ### Pembersihan
 
@@ -203,8 +249,9 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 3. `npm run build`
 4. `php artisan migrate --force`
 5. Pastikan `APP_DEBUG=false` dan `DEBUGBAR_ENABLED` tidak `true`.
-6. **Jangan jalankan `db:seed`** — `AdminUserSeeder` memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu set `is_admin = true` secara manual (lihat bagian Akses panel). Tanpa itu akun barunya kena 403.
-7. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` tidak pernah jalan dan `activity_log` tumbuh tanpa batas.
+6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini tidak membuat user, jadi aman di produksi.
+7. **Jangan jalankan `db:seed` polos** — itu ikut menjalankan `AdminUserSeeder` yang memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu `assignRole('super-admin')` manual. Tanpa role, akun barunya kena 403.
+8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` tidak pernah jalan dan `activity_log` tumbuh tanpa batas.
 
 ## Verifikasi cepat
 

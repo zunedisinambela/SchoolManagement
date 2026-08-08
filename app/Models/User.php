@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Enums\Permission;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
@@ -14,13 +15,14 @@ use Illuminate\Notifications\Notifiable;
 use Spatie\Activitylog\Models\Concerns\CausesActivity;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
+use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'password', 'is_admin'])]
+#[Fillable(['name', 'email', 'password'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use CausesActivity, HasFactory, LogsActivity, Notifiable;
+    use CausesActivity, HasFactory, HasRoles, LogsActivity, Notifiable;
 
     /**
      * Get the attributes that should be cast.
@@ -32,12 +34,15 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
-            'is_admin' => 'boolean',
         ];
     }
 
     /**
      * Gate access to the Filament panels.
+     *
+     * Keyed on a permission rather than on the super-admin role, so a future
+     * role such as `guru` can be let into the panel by granting it the
+     * permission instead of by editing this model.
      *
      * Deny by default: an unrecognised panel id returns false rather than
      * inheriting the admin rule, so adding a second panel later cannot
@@ -46,7 +51,7 @@ class User extends Authenticatable implements FilamentUser
     public function canAccessPanel(Panel $panel): bool
     {
         return match ($panel->getId()) {
-            'admin' => (bool) $this->is_admin,
+            'admin' => $this->can(Permission::AksesPanelAdmin->value),
             default => false,
         };
     }

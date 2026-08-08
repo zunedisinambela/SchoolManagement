@@ -14,7 +14,10 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Order matters: AdminUserSeeder assigns the role that
+        // RolePermissionSeeder creates.
         $this->call([
+            RolePermissionSeeder::class,
             AdminUserSeeder::class,
         ]);
     }

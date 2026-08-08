@@ -2,10 +2,14 @@
 
 namespace Database\Factories;
 
+use App\Enums\Permission as PermissionEnum;
+use App\Enums\Role as RoleEnum;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 
 /**
  * @extends Factory<User>
@@ -41,5 +45,32 @@ class UserFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
         ]);
+    }
+
+    /**
+     * Give the user the super-admin role, creating it if the seeders have not
+     * run. Gate::before grants this role every permission.
+     */
+    public function superAdmin(): static
+    {
+        return $this->afterCreating(function (User $user) {
+            $user->assignRole(Role::findOrCreate(RoleEnum::SuperAdmin->value, 'web'));
+        });
+    }
+
+    /**
+     * Give the user exactly the listed permissions and no role.
+     *
+     * @param  PermissionEnum|array<int, PermissionEnum>  $permissions
+     */
+    public function withPermissions(PermissionEnum|array $permissions): static
+    {
+        $permissions = is_array($permissions) ? $permissions : [$permissions];
+
+        return $this->afterCreating(function (User $user) use ($permissions) {
+            foreach ($permissions as $permission) {
+                $user->givePermissionTo(Permission::findOrCreate($permission->value, 'web'));
+            }
+        });
     }
 }
