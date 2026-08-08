@@ -74,7 +74,7 @@ Jangan tulis string mentah. Sumber kebenarannya:
 | File | Isi |
 |---|---|
 | `app/Enums/Role.php` | `SuperAdmin = 'super-admin'` |
-| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas` |
+| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole` |
 
 ```php
 $user->can(Permission::LihatLogAktivitas->value);
@@ -95,11 +95,28 @@ Wajib `null`, bukan `false`, untuk user non-super-admin. `false` akan menghentik
 
 Konsekuensinya: jangan pernah memberi `super-admin` ke user biasa. Role itu melewati **semua** policy, bukan cuma permission yang terdaftar.
 
-### Menaikkan hak user
+### UI di panel admin
+
+Grup navigasi **Manajemen Akses**:
+
+| Menu | URL | Izin | Sifat |
+|---|---|---|---|
+| Pengguna | `/admin/users` | `kelola-pengguna` | CRUD + centang role |
+| Role | `/admin/roles` | `kelola-role` | CRUD + centang izin |
+| Izin | `/admin/permissions` | `kelola-role` | **read-only** |
+
+Pengaman yang sengaja dipasang — jangan dilonggarkan tanpa alasan:
+
+- **Izin read-only.** Nama izin bukan data bebas; tiap nama adalah case di `App\Enums\Permission` dan dirujuk dari `canAccess()` atau `can()`. Izin yang dibuat lewat UI tidak cocok dengan pengecekan mana pun, dan menghapus izin diam-diam mencabut akses. Keduanya perubahan kode, tempatnya di enum + seeder.
+- **Role `super-admin` terkunci** dari edit dan hapus. Namanya dirujuk dari `App\Enums\Role`, dari `Gate::before`, dan dari sebuah migrasi. Daftar izinnya juga tidak berarti karena gate memberi semuanya.
+- **Super-admin terakhir tidak bisa dilepas rolenya**, baik lewat form edit maupun tombol hapus. Tanpa ini, admin bisa mencabut role dari satu-satunya akun yang punya — termasuk akunnya sendiri — dan mengunci semua orang, karena tidak ada jalur lain di panel untuk mengembalikannya.
+- **Tidak bisa menghapus akun sendiri.**
+- **Bulk delete dimatikan** di Pengguna dan Role. Filament tidak menjalankan `canDelete()` per baris saat bulk, jadi pengaman di atas akan terlewat.
+
+### Lewat CLI
 
 ```bash
 php artisan permission:create-role guru
-php artisan permission:create-permission siswa.lihat
 php artisan tinker --execute="App\Models\User::where('email','x@y.com')->first()->assignRole('super-admin');"
 ```
 
@@ -108,6 +125,8 @@ Setelah mengubah role/permission langsung lewat SQL (bukan lewat model), bersihk
 ```bash
 php artisan permission:cache-reset
 ```
+
+Jangan pakai `permission:create-permission` — izin harus lahir dari enum, lihat bagian di atas.
 
 ### Kolom `is_admin` sudah tidak ada
 
@@ -137,8 +156,17 @@ Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **L
 |---|---|---|
 | `user` | trait `LogsActivity` di `App\Models\User` | `created`, `updated`, `deleted` |
 | `auth` | `App\Listeners\LogAuthenticationActivity` | `login`, `logout`, `failed`, `lockout` |
+| `otorisasi` | `App\Listeners\LogAuthorizationChanges` | `role-diberikan`, `role-dicabut`, `izin-diberikan`, `izin-dicabut` |
 
-Listener auth didaftarkan **manual** di `AppServiceProvider::boot()` — nama methodnya `handleLogin` dkk, bukan `handle`, jadi auto-discovery Laravel tidak menangkapnya. Kalau menambah event auth baru, daftarkan di situ juga.
+Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, perubahan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
+
+### Nama method listener wajib `recordX`, jangan `handleX`
+
+Semua listener didaftarkan manual di `AppServiceProvider::boot()`. Methodnya dinamai `recordLogin`, `recordRoleAttached`, dan seterusnya — **bukan** `handleLogin`.
+
+Alasannya: auto-discovery Laravel mencocokkan pola `handle*`, bukan cuma `handle` persis (`DiscoverEvents.php`, `Str::is('handle*', ...)`). Method bernama `handleLogin` akan terdaftar **dua kali** — sekali oleh discovery, sekali oleh `Event::listen` — dan setiap aktivitas tertulis dobel di `activity_log`.
+
+Kalau menambah listener baru: nama method `recordX`, lalu daftarkan di `AppServiceProvider`. Tes `ActivityLogTest` dan `AccessManagementUiTest` memakai `assertCount(1, ...)` khusus untuk menangkap regresi ini.
 
 ### Menambah model baru ke audit log
 

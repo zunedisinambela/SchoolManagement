@@ -15,6 +15,10 @@ enum Permission: string
 
     case LihatLogAktivitas = 'lihat-log-aktivitas';
 
+    case KelolaPengguna = 'kelola-pengguna';
+
+    case KelolaRole = 'kelola-role';
+
     /**
      * @return array<int, string>
      */
@@ -28,6 +32,8 @@ enum Permission: string
         return match ($this) {
             self::AksesPanelAdmin => __('Akses panel admin'),
             self::LihatLogAktivitas => __('Lihat log aktivitas'),
+            self::KelolaPengguna => __('Kelola pengguna'),
+            self::KelolaRole => __('Kelola role & permission'),
         };
     }
 }

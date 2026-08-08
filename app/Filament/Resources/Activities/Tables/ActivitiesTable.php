@@ -47,6 +47,8 @@ class ActivitiesTable
                         'login' => 'info',
                         'logout' => 'gray',
                         'failed', 'lockout' => 'danger',
+                        'role-diberikan', 'izin-diberikan' => 'success',
+                        'role-dicabut', 'izin-dicabut' => 'warning',
                         default => 'gray',
                     }),
                 TextColumn::make('description')
@@ -89,6 +91,10 @@ class ActivitiesTable
                         'logout' => __('Keluar'),
                         'failed' => __('Gagal masuk'),
                         'lockout' => __('Terkunci'),
+                        'role-diberikan' => __('Role diberikan'),
+                        'role-dicabut' => __('Role dicabut'),
+                        'izin-diberikan' => __('Izin diberikan'),
+                        'izin-dicabut' => __('Izin dicabut'),
                     ]),
                 SelectFilter::make('log_name')
                     ->label(__('Kanal'))

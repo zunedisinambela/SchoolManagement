@@ -135,8 +135,12 @@ return [
      * \Spatie\Permission\Events\PermissionDetachedEvent
      *
      * To enable, set to true, and then create listeners to watch these events.
+     *
+     * Enabled here so App\Listeners\LogAuthorizationChanges can record every
+     * grant and revoke to the activity log. Turning this back off makes those
+     * changes invisible in the audit trail.
      */
-    'events_enabled' => false,
+    'events_enabled' => true,
 
     /*
      * Teams Feature.
