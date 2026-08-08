@@ -12,7 +12,7 @@ class LogAuthenticationActivity
 {
     public function __construct(protected Request $request) {}
 
-    public function handleLogin(Login $event): void
+    public function recordLogin(Login $event): void
     {
         activity('auth')
             ->causedBy($event->user)
@@ -22,7 +22,7 @@ class LogAuthenticationActivity
             ->log('Masuk');
     }
 
-    public function handleLogout(Logout $event): void
+    public function recordLogout(Logout $event): void
     {
         if (! $event->user) {
             return;
@@ -41,7 +41,7 @@ class LogAuthenticationActivity
      * identifier is stored as a property instead. The submitted password is
      * never read off $event->credentials.
      */
-    public function handleFailed(Failed $event): void
+    public function recordFailed(Failed $event): void
     {
         activity('auth')
             ->causedBy($event->user)
@@ -52,7 +52,7 @@ class LogAuthenticationActivity
             ->log('Gagal masuk');
     }
 
-    public function handleLockout(Lockout $event): void
+    public function recordLockout(Lockout $event): void
     {
         activity('auth')
             ->event('lockout')

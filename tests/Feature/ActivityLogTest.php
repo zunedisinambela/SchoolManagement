@@ -27,10 +27,14 @@ class ActivityLogTest extends TestCase
 
         $this->assertTrue(Auth::attempt(['email' => $user->email, 'password' => 'password']));
 
-        $activity = Activity::query()->inLog('auth')->forEvent('login')->latest('id')->first();
+        $logins = Activity::query()->inLog('auth')->forEvent('login')->get();
 
-        $this->assertNotNull($activity, 'Login did not produce an activity record.');
-        $this->assertTrue($activity->causer->is($user));
+        // Exactly one. Laravel's listener auto-discovery matches any `handle*`
+        // method, so a listener method named handleLogin would be registered
+        // twice -- once by discovery, once by AppServiceProvider -- and write
+        // every row in duplicate.
+        $this->assertCount(1, $logins, 'Login should produce exactly one activity record.');
+        $this->assertTrue($logins->first()->causer->is($user));
     }
 
     public function test_failed_login_is_recorded_without_the_password(): void
