@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Permissions;
 use App\Enums\Permission as PermissionEnum;
 use App\Filament\Resources\Permissions\Pages\ListPermissions;
 use App\Filament\Resources\Permissions\Tables\PermissionsTable;
+use App\Models\Permission;
 use BackedEnum;
 use Filament\Facades\Filament;
 use Filament\Resources\Resource;
@@ -12,7 +13,6 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Spatie\Permission\Models\Permission;
 
 /**
  * Read-only catalogue of the permissions the code actually checks.

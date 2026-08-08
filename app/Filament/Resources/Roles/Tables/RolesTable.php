@@ -3,12 +3,12 @@
 namespace App\Filament\Resources\Roles\Tables;
 
 use App\Filament\Resources\Roles\RoleResource;
+use App\Models\Role;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Spatie\Permission\Models\Role;
 
 class RolesTable
 {

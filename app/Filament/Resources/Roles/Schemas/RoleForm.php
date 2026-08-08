@@ -3,12 +3,12 @@
 namespace App\Filament\Resources\Roles\Schemas;
 
 use App\Enums\Permission as PermissionEnum;
+use App\Models\Permission;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Str;
-use Spatie\Permission\Models\Permission;
 
 class RoleForm
 {

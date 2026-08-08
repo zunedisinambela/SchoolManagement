@@ -4,10 +4,10 @@ namespace App\Filament\Resources\Roles\Schemas;
 
 use App\Enums\Permission as PermissionEnum;
 use App\Filament\Resources\Roles\RoleResource;
+use App\Models\Role;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
-use Spatie\Permission\Models\Role;
 
 class RoleInfolist
 {

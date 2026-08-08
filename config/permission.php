@@ -1,8 +1,8 @@
 <?php
 
+use App\Models\Permission;
+use App\Models\Role;
 use Spatie\Permission\DefaultTeamResolver;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
 
 return [
 
@@ -15,6 +15,9 @@ return [
          *
          * The model you want to use as a Permission model needs to implement the
          * `Spatie\Permission\Contracts\Permission` contract.
+         *
+         * App\Models\Permission extends Spatie's and adds LogsActivity, so
+         * that creating or deleting a permission lands in the audit log.
          */
 
         'permission' => Permission::class,
@@ -26,6 +29,9 @@ return [
          *
          * The model you want to use as a Role model needs to implement the
          * `Spatie\Permission\Contracts\Role` contract.
+         *
+         * App\Models\Role extends Spatie's and adds LogsActivity, so that
+         * creating, renaming or deleting a role lands in the audit log.
          */
 
         'role' => Role::class,

@@ -3,13 +3,13 @@
 namespace App\Filament\Resources\Users\Schemas;
 
 use App\Enums\Role as RoleEnum;
+use App\Models\Role;
 use App\Models\User;
 use Closure;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
-use Spatie\Permission\Models\Role;
 
 class UserForm
 {

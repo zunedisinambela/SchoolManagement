@@ -4,9 +4,9 @@ namespace App\Filament\Resources\Permissions\Tables;
 
 use App\Enums\Permission as PermissionEnum;
 use App\Enums\Role as RoleEnum;
+use App\Models\Permission;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Spatie\Permission\Models\Permission;
 
 class PermissionsTable
 {

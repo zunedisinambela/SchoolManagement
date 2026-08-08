@@ -14,14 +14,14 @@ use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
 use App\Filament\Resources\Users\Pages\ListUsers;
 use App\Filament\Resources\Users\UserResource;
+use App\Models\Permission;
+use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class AccessManagementUiTest extends TestCase
@@ -236,9 +236,13 @@ class AccessManagementUiTest extends TestCase
         $admin = $this->admin();
         $user = User::factory()->create();
 
+        // Created before the log is cleared: creating a role is itself an
+        // `otorisasi` record now, and this test is about the grant.
+        $role = Role::findOrCreate('guru', 'web');
+
         Activity::query()->delete();
 
-        $user->assignRole(Role::findOrCreate('guru', 'web'));
+        $user->assignRole($role);
 
         $records = Activity::query()->inLog('otorisasi')->get();
 
@@ -270,6 +274,57 @@ class AccessManagementUiTest extends TestCase
         $activity = $records->first();
         $this->assertSame('role-dicabut', $activity->event);
         $this->assertSame(['guru'], $activity->getProperty('role'));
+    }
+
+    public function test_creating_renaming_and_deleting_a_role_is_recorded(): void
+    {
+        $this->admin();
+
+        Activity::query()->delete();
+
+        $role = Role::create(['name' => 'wali-kelas', 'guard_name' => 'web']);
+        $role->update(['name' => 'wali-murid']);
+        $role->delete();
+
+        $events = Activity::query()->inLog('otorisasi')->orderBy('id')->get();
+
+        $this->assertSame(['created', 'updated', 'deleted'], $events->pluck('event')->all());
+
+        $rename = $events->firstWhere('event', 'updated');
+        $this->assertSame('wali-kelas', $rename->attribute_changes['old']['name']);
+        $this->assertSame('wali-murid', $rename->attribute_changes['attributes']['name']);
+    }
+
+    public function test_deleting_a_permission_is_recorded(): void
+    {
+        $this->admin();
+        $permission = Permission::findOrCreate('coba.lihat', 'web');
+
+        Activity::query()->delete();
+
+        $permission->delete();
+
+        $activity = Activity::query()->inLog('otorisasi')->latest('id')->first();
+
+        $this->assertNotNull($activity, 'Deleting a permission produced no activity record.');
+        $this->assertSame('deleted', $activity->event);
+
+        // A delete records what was there under `old`; there is no new side.
+        $this->assertSame('coba.lihat', $activity->attribute_changes['old']['name']);
+    }
+
+    /**
+     * The package must resolve the subclasses, otherwise role CRUD is written
+     * by Spatie's own models and never reaches the log.
+     */
+    public function test_the_package_resolves_the_app_models(): void
+    {
+        $this->assertSame(Role::class, config('permission.models.role'));
+        $this->assertSame(Permission::class, config('permission.models.permission'));
+
+        $user = User::factory()->superAdmin()->create();
+
+        $this->assertInstanceOf(Role::class, $user->roles->first());
     }
 
     public function test_granting_a_permission_to_a_role_is_recorded(): void

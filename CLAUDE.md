@@ -157,8 +157,17 @@ Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **L
 | `user` | trait `LogsActivity` di `App\Models\User` | `created`, `updated`, `deleted` |
 | `auth` | `App\Listeners\LogAuthenticationActivity` | `login`, `logout`, `failed`, `lockout` |
 | `otorisasi` | `App\Listeners\LogAuthorizationChanges` | `role-diberikan`, `role-dicabut`, `izin-diberikan`, `izin-dicabut` |
+| `otorisasi` | trait `LogsActivity` di `App\Models\Role` dan `App\Models\Permission` | `created`, `updated`, `deleted` |
 
-Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, perubahan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
+Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, pemberian dan pencabutan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
+
+### Model Role & Permission dioverride
+
+`App\Models\Role` dan `App\Models\Permission` meng-extend model Spatie dan menambah `LogsActivity`. Terdaftar di `config/permission.php` → `models.role` / `models.permission`, dan itulah yang membuat paket memakai class ini di mana-mana, termasuk relasi `$user->roles` dan pemanggilan `assignRole()`.
+
+**Selalu import `App\Models\Role`, jangan `Spatie\Permission\Models\Role`.** Class Spatie tetap berfungsi dan menulis baris ke tabel yang sama, tapi tanpa jejak audit. Ada tes `test_the_package_resolves_the_app_models` yang mengunci konfigurasinya.
+
+Hati-hati tabrakan nama: `App\Enums\Role` menyimpan *nama* role, `App\Models\Role` adalah modelnya. Di file yang butuh keduanya, beri alias — konvensi di repo ini `use App\Enums\Role as RoleEnum`.
 
 ### Nama method listener wajib `recordX`, jangan `handleX`
 
@@ -187,6 +196,14 @@ public function getActivitylogOptions(): LogOptions
 ```
 
 Tidak perlu mengubah apa pun di resource Filament — tabel log otomatis menampilkannya.
+
+Bentuk data per event, berguna saat menulis tes:
+
+| Event | Isi `attribute_changes` |
+|---|---|
+| `created` | `attributes` saja |
+| `updated` | `attributes` (nilai baru) + `old` (nilai lama) |
+| `deleted` | `old` saja |
 
 ### Keamanan
 

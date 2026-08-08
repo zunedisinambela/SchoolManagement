@@ -5,13 +5,13 @@ namespace Tests\Feature;
 use App\Enums\Permission as PermissionEnum;
 use App\Enums\Role as RoleEnum;
 use App\Filament\Resources\Activities\ActivityResource;
+use App\Models\Permission;
+use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\AdminUserSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class RolePermissionTest extends TestCase

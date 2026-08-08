@@ -11,6 +11,7 @@ use App\Filament\Resources\Roles\Pages\ViewRole;
 use App\Filament\Resources\Roles\Schemas\RoleForm;
 use App\Filament\Resources\Roles\Schemas\RoleInfolist;
 use App\Filament\Resources\Roles\Tables\RolesTable;
+use App\Models\Role;
 use BackedEnum;
 use Filament\Facades\Filament;
 use Filament\Resources\Resource;
@@ -19,7 +20,6 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Spatie\Permission\Models\Role;
 
 class RoleResource extends Resource
 {
