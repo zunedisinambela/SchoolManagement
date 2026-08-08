@@ -4,7 +4,17 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 
 ## Stack
 
-Laravel 12 (PHP), SQLite (`DB_CONNECTION=sqlite`), Vite. Belum ada modul aplikasi — baru skeleton.
+Laravel 13 (PHP), SQLite (`DB_CONNECTION=sqlite`), Vite. Belum ada modul aplikasi — baru skeleton.
+
+## Tooling dev
+
+`barryvdh/laravel-debugbar` terpasang sebagai **dev dependency** (`require-dev`).
+
+- Auto-discovery, tidak perlu daftar provider manual.
+- Dikendalikan `DEBUGBAR_ENABLED` di `.env`. Kalau tidak diset, ikut `APP_DEBUG`.
+- `.env.example` sengaja `DEBUGBAR_ENABLED=false` — aman kalau di-copy ke server.
+- **Jangan pernah aktif di produksi.** Debugbar membocorkan query SQL, isi session, dan variabel env. Deploy produksi wajib pakai `composer install --no-dev`.
+- Config bisa di-publish kalau perlu tuning collector: `php artisan vendor:publish --provider="Barryvdh\Debugbar\ServiceProvider"`.
 
 ## Lokalisasi (Indonesia)
 
