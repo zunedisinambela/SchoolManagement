@@ -11,9 +11,10 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Filament (admin panel) | 5 |
 | Database | SQLite — `database/database.sqlite` |
 | Frontend | Vite |
+| Audit log | spatie/laravel-activitylog 5 |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 
-Belum ada modul aplikasi — baru skeleton + panel admin kosong. Tabel yang ada baru bawaan Laravel (`users`, `cache`, `jobs`).
+Belum ada modul aplikasi — baru skeleton, panel admin, dan audit log. Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`) plus `activity_log`.
 
 ## Perintah
 
@@ -31,7 +32,7 @@ Panel `admin` di `app/Providers/Filament/AdminPanelProvider.php`, terdaftar di `
 - URL: `/admin`, login di `/admin/login`.
 - Resource, page, dan widget auto-discovery dari `app/Filament/Resources`, `app/Filament/Pages`, `app/Filament/Widgets`. Cukup buat file di sana, tidak perlu registrasi manual.
 - Generator: `php artisan make:filament-resource Siswa`, `make:filament-page`, `make:filament-widget`.
-- Buat user admin: `php artisan make:filament-user`.
+- Buat user admin: `php artisan make:filament-user`, atau `php artisan migrate:fresh --seed` (lihat bagian Seeder).
 - UI panel sudah berbahasa Indonesia otomatis — Filament membawa locale `id` sendiri dan mengikuti `APP_LOCALE`. Tidak perlu menerjemahkan apa pun untuk teks bawaan panel.
 
 **Asset panel di-gitignore.** `public/css/filament`, `public/js/filament`, `public/fonts/filament` adalah hasil generate, bukan source. Setelah `composer update` atau saat deploy **wajib** jalankan:
@@ -42,7 +43,74 @@ php artisan filament:assets
 
 Kalau dilewat, panel tampil tanpa CSS.
 
-**Belum ditangani — akses panel terbuka.** Secara default *semua* user di tabel `users` bisa login ke `/admin`. Sebelum produksi, `App\Models\User` harus implement `Filament\Models\Contracts\FilamentUser` dan mendefinisikan `canAccessPanel()`.
+**Belum ditangani — akses panel terbuka.** Secara default *semua* user di tabel `users` bisa login ke `/admin`. Sebelum produksi, `App\Models\User` harus implement `Filament\Models\Contracts\FilamentUser` dan mendefinisikan `canAccessPanel()` — kolom `is_admin` sudah tersedia untuk dipakai. Yang sudah dibatasi baru resource Log Aktivitas, lewat `canAccess()`-nya sendiri.
+
+## Seeder
+
+`php artisan migrate:fresh --seed` menghasilkan satu user admin siap pakai:
+
+| Field | Nilai |
+|---|---|
+| Email | `admin@admin.com` |
+| Password | `admin` |
+| `is_admin` | `true` |
+
+`AdminUserSeeder` pakai `updateOrCreate` dengan email sebagai kunci, jadi aman dijalankan berulang tanpa `migrate:fresh`.
+
+**Kredensial dev saja.** Jangan pernah jalankan seeder ini di produksi.
+
+## Audit log (spatie/laravel-activitylog)
+
+Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **Log Aktivitas** di panel admin (`/admin/activities`).
+
+### Apa yang tercatat
+
+| Kanal (`log_name`) | Sumber | Event |
+|---|---|---|
+| `user` | trait `LogsActivity` di `App\Models\User` | `created`, `updated`, `deleted` |
+| `auth` | `App\Listeners\LogAuthenticationActivity` | `login`, `logout`, `failed`, `lockout` |
+
+Listener auth didaftarkan **manual** di `AppServiceProvider::boot()` — nama methodnya `handleLogin` dkk, bukan `handle`, jadi auto-discovery Laravel tidak menangkapnya. Kalau menambah event auth baru, daftarkan di situ juga.
+
+### Menambah model baru ke audit log
+
+Pasang trait dan definisikan opsinya:
+
+```php
+use Spatie\Activitylog\Models\Concerns\LogsActivity;
+use Spatie\Activitylog\Support\LogOptions;
+
+public function getActivitylogOptions(): LogOptions
+{
+    return LogOptions::defaults()
+        ->logFillable()
+        ->logOnlyDirty()        // hanya kolom yang benar-benar berubah
+        ->dontLogEmptyChanges()
+        ->useLogName('siswa');
+}
+```
+
+Tidak perlu mengubah apa pun di resource Filament — tabel log otomatis menampilkannya.
+
+### Keamanan
+
+- `default_except_attributes` di `config/activitylog.php` berisi `password` dan `remember_token`. **Jangan dikosongkan** — kalau kosong, hash password ikut tersimpan di `activity_log` tiap kali user di-update.
+- Kalau menambah model dengan kolom sensitif (NIK, nomor rekening, token), tambahkan `->logExcept([...])` di `getActivitylogOptions()`. Nilai ini digabung dengan `default_except_attributes`.
+- Listener `handleFailed` sengaja **tidak** membaca `$event->credentials['password']`. Jangan diubah jadi menyimpan seluruh array credentials.
+
+### Resource Filament — read-only
+
+`app/Filament/Resources/Activities/` sengaja tidak punya page `create`/`edit`, dan `canCreate()`/`canEdit()`/`canDelete()` semuanya `false`. Audit trail yang bisa disunting tidak ada gunanya — jangan dibuka.
+
+Akses dibatasi lewat `canAccess()` yang mengecek `is_admin`.
+
+### Pembersihan
+
+`activitylog:clean` terjadwal harian jam 02:00 di `routes/console.php`. Batas umurnya `clean_after_days` (default 365) di `config/activitylog.php`. Scheduler perlu cron aktif di server (`php artisan schedule:run` tiap menit).
+
+### Mematikan sementara
+
+`ACTIVITYLOG_ENABLED=false` di `.env`. Berguna saat impor data massal supaya tidak membanjiri tabel.
 
 ## Tooling dev
 
@@ -114,6 +182,8 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 4. `php artisan migrate --force`
 5. Pastikan `APP_DEBUG=false` dan `DEBUGBAR_ENABLED` tidak `true`.
 6. Pastikan `canAccessPanel()` sudah dibuat (lihat bagian Filament).
+7. **Jangan jalankan `db:seed`** — `AdminUserSeeder` memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu set `is_admin` secara manual.
+8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` tidak pernah jalan dan `activity_log` tumbuh tanpa batas.
 
 ## Verifikasi cepat
 
