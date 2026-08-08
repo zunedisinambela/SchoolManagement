@@ -43,7 +43,29 @@ php artisan filament:assets
 
 Kalau dilewat, panel tampil tanpa CSS.
 
-**Belum ditangani — akses panel terbuka.** Secara default *semua* user di tabel `users` bisa login ke `/admin`. Sebelum produksi, `App\Models\User` harus implement `Filament\Models\Contracts\FilamentUser` dan mendefinisikan `canAccessPanel()` — kolom `is_admin` sudah tersedia untuk dipakai. Yang sudah dibatasi baru resource Log Aktivitas, lewat `canAccess()`-nya sendiri.
+### Akses panel
+
+`App\Models\User` implement `Filament\Models\Contracts\FilamentUser`. Hanya user dengan `is_admin = true` yang bisa membuka `/admin`; sisanya dapat HTTP 403.
+
+```php
+public function canAccessPanel(Panel $panel): bool
+{
+    return match ($panel->getId()) {
+        'admin' => (bool) $this->is_admin,
+        default => false,
+    };
+}
+```
+
+Cabang `default` sengaja `false`. Kalau nanti menambah panel kedua (misal panel guru atau siswa), panel itu **tertutup sampai ditambahkan eksplisit** ke `match` — tidak diam-diam ikut aturan admin. Jangan diganti jadi `return $this->is_admin` polos.
+
+Resource Log Aktivitas punya lapis kedua lewat `canAccess()`-nya sendiri, juga berdasarkan `is_admin`.
+
+Menaikkan user jadi admin:
+
+```bash
+php artisan tinker --execute="App\Models\User::where('email','x@y.com')->update(['is_admin' => true]);"
+```
 
 ## Seeder
 
@@ -181,9 +203,8 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 3. `npm run build`
 4. `php artisan migrate --force`
 5. Pastikan `APP_DEBUG=false` dan `DEBUGBAR_ENABLED` tidak `true`.
-6. Pastikan `canAccessPanel()` sudah dibuat (lihat bagian Filament).
-7. **Jangan jalankan `db:seed`** — `AdminUserSeeder` memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu set `is_admin` secara manual.
-8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` tidak pernah jalan dan `activity_log` tumbuh tanpa batas.
+6. **Jangan jalankan `db:seed`** — `AdminUserSeeder` memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu set `is_admin = true` secara manual (lihat bagian Akses panel). Tanpa itu akun barunya kena 403.
+7. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` tidak pernah jalan dan `activity_log` tumbuh tanpa batas.
 
 ## Verifikasi cepat
 
