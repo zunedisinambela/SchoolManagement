@@ -17,6 +17,7 @@ class AdminUserSeeder extends Seeder
             [
                 'name' => 'admin',
                 'password' => 'admin',
+                'is_admin' => true,
             ],
         );
     }
