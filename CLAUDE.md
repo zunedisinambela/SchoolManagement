@@ -226,6 +226,22 @@ Urutannya penting: `RolePermissionSeeder` membuat role dan permission, baru `Adm
 
 **Kredensial dev saja.** Jangan pernah jalankan `AdminUserSeeder` di produksi. `RolePermissionSeeder` aman — isinya cuma role dan permission, tanpa user.
 
+### `DatabaseSeeder` membungkam model event — dan itu mematikan cache Spatie
+
+`DatabaseSeeder` memakai trait `WithoutModelEvents`, jadi seluruh seeding berjalan di dalam `Model::withoutEvents()`. Efeknya bukan cuma "seeding tidak masuk audit log": paket pihak ketiga menumpang event Eloquent untuk **kebenaran**, bukan sekadar efek samping.
+
+`spatie/laravel-permission` membatalkan cache permission-nya lewat trait `RefreshesPermissionCache`, yang hook ke event `created`/`deleted`. Dengan event dibungkam, rantainya jadi begini di database kosong:
+
+1. `Permission::findOrCreate()` yang pertama melakukan lookup → `PermissionRegistrar` memuat isi tabel (masih kosong) dan **menyimpannya sebagai koleksi kosong**.
+2. Enam baris permission tertulis ke tabel. Tidak ada yang membatalkan cache tadi.
+3. `givePermissionTo()` bertanya ke cache, bukan ke tabel → `PermissionDoesNotExist: There is no permission named 'akses-panel-admin' for guard 'web'` untuk izin yang barisnya jelas-jelas ada.
+
+Karena itu `RolePermissionSeeder` memanggil `forgetCachedPermissions()` **tiga kali**: di awal, **di antara loop pembuatan permission dan loop role**, dan di akhir. Yang di tengah itulah yang menambal celahnya — jangan dihapus karena terlihat kembar dengan yang di awal. Flush eksplisit juga membuat seeder berhenti bergantung pada model event sama sekali, jadi ia benar dipanggil dari mana pun.
+
+Gejala yang sama akan muncul di seeder lain mana pun yang membuat permission lalu memakainya dalam satu proses. Kalau menulis seeder baru yang menyentuh role/permission, flush di antaranya.
+
+Yang menguncinya `test_seeding_through_the_database_seeder_grants_role_permissions` — dan ia satu-satunya tes yang bisa, karena tes lain memanggil `RolePermissionSeeder` **langsung** dan jalur itu tidak lewat `WithoutModelEvents`.
+
 ## Audit log (spatie/laravel-activitylog)
 
 Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **Log Aktivitas** di panel admin (`/admin/activities`).
@@ -638,7 +654,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | File | Yang dijaga |
 |---|---|
 | `AdminPanelAccessTest` | Siapa boleh membuka `/admin`, dan panel id asing tidak mewarisi aturan admin |
-| `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, developer tidak ikut bypass, tiap role dapat izin bawaannya dan tidak lebih, seeder idempoten & tidak mencabut |
+| `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, developer tidak ikut bypass, tiap role dapat izin bawaannya dan tidak lebih, seeder idempoten & tidak mencabut, dan seeding lewat `DatabaseSeeder` benar-benar memberikan izinnya |
 | `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
 | `AccessManagementUiTest` | Form pengguna & role, pengaman anti-terkunci, perubahan otorisasi masuk log |
 | `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false` |
@@ -656,6 +672,7 @@ Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus k
 - `test_every_enum_permission_is_seeded` dan `test_every_enum_role_is_seeded`: menangkap case enum yang lupa di-seed.
 - `test_each_role_receives_its_baseline_permissions_and_no_more`: memeriksa **dua arah**. Menguji grantnya saja akan meloloskan role yang kelebihan izin, dan itu justru kegagalan yang penting.
 - `test_reseeding_does_not_revoke_a_permission_granted_by_hand`: menangkap seeder yang diubah jadi `syncPermissions`, yang akan membuat tiap deploy membatalkan penyesuaian izin lewat panel.
+- `test_seeding_through_the_database_seeder_grants_role_permissions`: satu-satunya tes yang memanggil `$this->seed()` tanpa argumen, jadi satu-satunya yang melewati `WithoutModelEvents` milik `DatabaseSeeder` — jalur yang sebenarnya dipakai `migrate:fresh --seed`. Assert-nya sengaja pada **grant**, bukan `Permission::count()`: barisnya tetap tertulis walau bug-nya kambuh, jadi menghitung baris akan hijau sepanjang kegagalan. Role yang diuji `guru`, bukan `super-admin`, karena yang terakhir lolos lewat `Gate::before` dan akan hijau apa pun keadaan cachenya. Latar belakangnya di bagian *`DatabaseSeeder` membungkam model event*.
 - `test_the_package_resolves_the_app_models`: menangkap `config/permission.php` yang balik menunjuk model Spatie.
 - `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
 - `callTableAction` + `assertModelExists` di `TableActionAuthorizationTest`: menangkap tombol hapus yang lolos pengaman. Memanggil `canDelete()` saja tidak cukup.
