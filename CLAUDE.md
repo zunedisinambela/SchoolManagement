@@ -136,6 +136,28 @@ Pengaman yang sengaja dipasang — jangan dilonggarkan tanpa alasan:
 - **Tidak bisa menghapus akun sendiri.**
 - **Bulk delete dimatikan** di Pengguna dan Role. Filament tidak menjalankan `canDelete()` per baris saat bulk, jadi pengaman di atas akan terlewat.
 
+### Action Filament TIDAK ikut `canEdit()` / `canDelete()`
+
+Jebakan paling berbahaya di panel ini. Dari sumber Filament (`Filament\Actions\Concerns\CanBeAuthorized`):
+
+> Actions do not have automatic policy-based authorization. Authorization defaults to `null` (allowed for all users). You must explicitly use `authorize()`, `visible()`, or `hidden()`.
+
+Artinya `canEdit()` / `canDelete()` di resource **hanya menjaga halaman**, bukan tombolnya. Tombol `DeleteAction` yang tidak dijaga akan **benar-benar menghapus record** walaupun `canDelete()` mengembalikan `false` — tanpa error, tanpa 403.
+
+Setiap `DeleteAction` di repo ini karena itu dipasangi:
+
+```php
+DeleteAction::make()
+    ->disabled(fn (User $record) => ! UserResource::canDelete($record))
+    ->tooltip(fn (User $record) => /* alasannya */),
+```
+
+`disabled()` diperiksa di sisi server sebelum action dijalankan (`InteractsWithActions::callMountedAction`), jadi bukan sekadar abu-abu di tampilan. Dipilih ketimbang `hidden()` supaya alasannya terbaca lewat tooltip — tombol yang hilang begitu saja terbaca seperti bug.
+
+**Kalau menambah `DeleteAction` atau `EditAction` baru di mana pun — tabel maupun header halaman — wajib pasang `->disabled(...)` sendiri.** Jangan berasumsi resource sudah menjaganya.
+
+`tests/Feature/TableActionAuthorizationTest.php` memanggil tombolnya sungguhan (`callTableAction`) lalu memeriksa recordnya masih ada. Tes yang cuma memanggil `canDelete()` tidak akan menangkap kelas bug ini.
+
 ### Lewat CLI
 
 ```bash
@@ -258,6 +280,7 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 | `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, izin panel vs izin log terpisah, seeder idempoten |
 | `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
 | `AccessManagementUiTest` | Form pengguna & role, pengaman anti-terkunci, perubahan otorisasi masuk log |
+| `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false` |
 
 Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus karena terlihat sepele:
 
@@ -265,6 +288,7 @@ Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus k
 - `test_every_enum_permission_is_seeded`: menangkap case enum yang lupa di-seed.
 - `test_the_package_resolves_the_app_models`: menangkap `config/permission.php` yang balik menunjuk model Spatie.
 - `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
+- `callTableAction` + `assertModelExists` di `TableActionAuthorizationTest`: menangkap tombol hapus yang lolos pengaman. Memanggil `canDelete()` saja tidak cukup.
 
 Menulis tes halaman Filament pakai Livewire, bukan HTTP:
 

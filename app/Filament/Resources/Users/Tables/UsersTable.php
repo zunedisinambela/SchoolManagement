@@ -54,11 +54,16 @@ class UsersTable
                 ViewAction::make(),
                 EditAction::make(),
                 DeleteAction::make()
-                    // canDelete already hides this, but an explicit reason beats
-                    // a button that silently disappears.
+                    // Filament actions carry no automatic policy check, so the
+                    // resource's canDelete() guards the record page but not
+                    // this button. Without the disabled() below, clicking it
+                    // really does delete the row -- see
+                    // Filament\Actions\Concerns\CanBeAuthorized. A disabled
+                    // action is refused server-side, not merely greyed out.
+                    ->disabled(fn (User $record) => ! UserResource::canDelete($record))
                     ->tooltip(fn (User $record) => match (true) {
                         $record->is(Filament::auth()->user()) => __('Tidak bisa menghapus akun sendiri.'),
-                        UserResource::isLastSuperAdmin($record) => __('Ini super-admin terakhir.'),
+                        UserResource::isLastSuperAdmin($record) => __('Ini super-admin terakhir, harus ada yang tersisa.'),
                         default => null,
                     }),
             ]);

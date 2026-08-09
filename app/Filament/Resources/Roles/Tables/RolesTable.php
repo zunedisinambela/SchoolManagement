@@ -37,8 +37,20 @@ class RolesTable
             ])
             ->recordActions([
                 ViewAction::make(),
-                EditAction::make(),
-                DeleteAction::make(),
+                // Filament actions are not authorized automatically, so the
+                // resource's canEdit()/canDelete() only guard the pages. These
+                // buttons have to be disabled explicitly, otherwise Edit leads
+                // to a bare 403 and Delete actually removes the role.
+                EditAction::make()
+                    ->disabled(fn (Role $record) => ! RoleResource::canEdit($record))
+                    ->tooltip(fn (Role $record) => RoleResource::isSuperAdmin($record)
+                        ? __('Role super-admin dikunci, namanya dirujuk dari kode.')
+                        : null),
+                DeleteAction::make()
+                    ->disabled(fn (Role $record) => ! RoleResource::canDelete($record))
+                    ->tooltip(fn (Role $record) => RoleResource::isSuperAdmin($record)
+                        ? __('Role super-admin dikunci, namanya dirujuk dari kode.')
+                        : null),
             ]);
     }
 }
