@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\BackupSchedule;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Artisan;
@@ -37,6 +38,12 @@ class RunBackup implements ShouldQueue
 
     public function handle(): void
     {
+        // The queue worker is a long-running process: routes/console.php was
+        // evaluated once when it booted, possibly before the password was set
+        // and certainly not again since. Re-applied here so the button and the
+        // scheduler always produce archives with the same password.
+        BackupSchedule::current()->applyArchivePassword();
+
         Artisan::call('backup:run');
     }
 }

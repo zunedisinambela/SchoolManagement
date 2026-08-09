@@ -17,7 +17,7 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, dan backup terjadwal.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, serta backup terjadwal lengkap dengan password arsip dan restore dari panel.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
@@ -34,6 +34,7 @@ composer run setup    # install deps, generate key, migrate, build asset
 ./vendor/bin/pint     # format kode PHP
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
+# restore: lewat tombol Pulihkan di /admin/backups, atau langkah CLI di bagian Restore
 ```
 
 ## Filament (admin panel)
@@ -103,7 +104,7 @@ Jangan tulis string mentah. Sumber kebenarannya:
 | File | Isi |
 |---|---|
 | `app/Enums/Role.php` | `Developer`, `SuperAdmin`, `Admin`, `Guru`, `Karyawan`, `Murid` |
-| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole`, `KelolaBackup` |
+| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole`, `KelolaBackup`, `PulihkanBackup` |
 
 ```php
 $user->can(Permission::LihatLogAktivitas->value);
@@ -120,14 +121,14 @@ $user->assignRole(Role::SuperAdmin->value);
 |---|---|---|
 | `developer` | **semua** (`Permission::cases()`) | Eksplisit, bukan lewat gate — lihat di bawah |
 | `super-admin` | *tidak ada* | Lolos semua lewat `Gate::before` |
-| `admin` | `akses-panel-admin`, `kelola-pengguna`, `lihat-log-aktivitas` | Sengaja tanpa `kelola-role` dan `kelola-backup` |
+| `admin` | `akses-panel-admin`, `kelola-pengguna`, `lihat-log-aktivitas` | Sengaja tanpa `kelola-role`, `kelola-backup`, dan `pulihkan-backup` |
 | `guru` | `akses-panel-admin` | Belum ada modul untuknya |
 | `karyawan` | `akses-panel-admin` | Belum ada modul untuknya |
 | `murid` | *tidak ada* | Tidak masuk panel admin |
 
 **`developer` bukan super-admin kedua.** Dia memegang tiap izin sebagai baris nyata di `role_has_permissions`, tidak lewat `Gate::before`. Bedanya baru terasa saat modul bertambah: policy modul baru **tetap berlaku** untuk developer, dan izin yang baru ditambahkan ke enum harus diberikan secara sadar (lewat seeder). Satu-satunya role yang melewati semuanya tetap `super-admin`. Tes `test_developer_holds_every_permission_without_bypassing_the_gate` mengunci perbedaan ini.
 
-**`admin` sengaja tidak dapat `kelola-role`.** Siapa pun yang memegangnya bisa membuat role berisi izin apa pun lalu memberikannya ke dirinya sendiri — praktis setara developer. `kelola-backup` juga ditahan karena berjarak satu klik dari mengunduh seluruh isi database.
+**`admin` sengaja tidak dapat `kelola-role`.** Siapa pun yang memegangnya bisa membuat role berisi izin apa pun lalu memberikannya ke dirinya sendiri — praktis setara developer. `kelola-backup` juga ditahan karena berjarak satu klik dari mengunduh seluruh isi database, dan `pulihkan-backup` karena ia mengganti tabel `users` dengan versi arsip — lihat *Restore*.
 
 **Seeder menambah, tidak pernah sync.** `givePermissionTo` dipakai, bukan `syncPermissions`. Ini disengaja: langkah 6 checklist deploy menjalankan seeder ini di **setiap** rilis, dan sync akan diam-diam membatalkan setiap perubahan izin yang dibuat lewat panel sejak deploy terakhir. Konsekuensinya, menghapus izin dari `permissions()` **tidak** mencabutnya di instalasi yang sudah jalan — itu harus dilakukan manual lewat panel. Dikunci `test_reseeding_does_not_revoke_a_permission_granted_by_hand`.
 
@@ -155,7 +156,7 @@ Grup navigasi **Manajemen Akses**:
 | Role | `/admin/roles` | `kelola-role` | CRUD + centang izin |
 | Izin | `/admin/permissions` | `kelola-role` | **read-only** |
 
-Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `lihat-log-aktivitas`, read-only) dan **Backup** (`/admin/backups`, izin `kelola-backup`) — lihat bagian *Audit log* dan *Backup*.
+Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `lihat-log-aktivitas`, read-only) dan **Backup** (`/admin/backups`, izin `kelola-backup`, plus `pulihkan-backup` khusus untuk tombol Pulihkan) — lihat bagian *Audit log* dan *Backup*.
 
 Pengaman yang sengaja dipasang — jangan dilonggarkan tanpa alasan:
 
@@ -237,7 +238,7 @@ Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **L
 | `auth` | `App\Listeners\LogAuthenticationActivity` | `login`, `logout`, `failed`, `lockout` |
 | `otorisasi` | `App\Listeners\LogAuthorizationChanges` | `role-diberikan`, `role-dicabut`, `izin-diberikan`, `izin-dicabut` |
 | `otorisasi` | trait `LogsActivity` di `App\Models\Role` dan `App\Models\Permission` | `created`, `updated`, `deleted` |
-| `backup` | aksi di `App\Filament\Pages\Backups` | `backup-dijalankan`, `backup-diunduh`, `backup-dihapus` |
+| `backup` | aksi di `App\Filament\Pages\Backups` | `backup-dijalankan`, `backup-diunduh`, `backup-dihapus`, `password-arsip-diubah`, `backup-dipulihkan` |
 | `backup` | trait `LogsActivity` di `App\Models\BackupSchedule` | `updated` |
 
 Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, pemberian dan pencabutan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
@@ -314,14 +315,18 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 
 Menu **Backup** (`$navigationSort` 80, tanpa grup, bertetangga dengan Log Aktivitas). Izinnya `kelola-backup`, **terpisah dari `akses-panel-admin`** — halaman ini memperlihatkan kapan database terakhir ditangkap dan berjarak satu klik dari menyerahkan seluruh isinya, jadi tidak ikut terbawa hanya karena seseorang boleh masuk panel.
 
+Satu aksi di halaman ini dijaga izin **kedua**: tombol **Pulihkan** butuh `pulihkan-backup`. Pemegang `kelola-backup` melihat halamannya tanpa tombol itu. Alasannya di bagian *Restore*.
+
 Isinya: ringkasan status di subheading (jumlah arsip, total ukuran, umur arsip terbaru), tabel arsip, dan tiga aksi.
 
 | Aksi | Perilaku |
 |---|---|
 | **Ubah Jadwal** | Form frekuensi/hari/jam, disimpan ke `backup_schedules` |
+| **Password Arsip** | Password enkripsi AES-256, disimpan terenkripsi di `backup_schedules.archive_password` |
 | **Backup Sekarang** | Dispatch `App\Jobs\RunBackup` ke queue, bukan dijalankan di request |
 | **Unduh** | Streaming download, dicatat ke `activity_log` |
 | **Hapus** | Konfirmasi wajib, arsip terbaru dikunci, dicatat ke `activity_log` |
+| **Pulihkan** | Izin terpisah `pulihkan-backup`, konfirmasi ketik nama berkas, lihat *Restore* |
 
 **Bukan Resource, melainkan `Filament\Pages\Page`.** Backup itu berkas di disk, bukan record Eloquent — tidak ada model, tidak ada id, tidak ada yang bisa di-query. Tabelnya diisi lewat `->records()`, bukan `->query()`, sehingga tiap baris sampai ke closure sebagai **array biasa, bukan Model**. Semua closure di halaman itu karena itu bertipe `array $record`.
 
@@ -384,7 +389,7 @@ Aman terhadap `php artisan config:cache` — yang tersimpan di cache cuma nama c
 | Key | Isi |
 |---|---|
 | `BACKUP_NAME` | Nama folder di disk tujuan **dan** nama yang dipantau. Ubah = mulai menulis ke folder baru |
-| `BACKUP_ARCHIVE_PASSWORD` | Password AES-256. Hilang = seluruh arsip tidak bisa dibuka |
+| `BACKUP_ARCHIVE_PASSWORD` | Password AES-256 **cadangan** — dipakai hanya kalau belum disetel lewat panel. Hilang keduanya = seluruh arsip tidak bisa dibuka |
 | `BACKUP_NOTIFICATION_EMAIL` | Tujuan notifikasi kegagalan |
 | `DB_DUMP_BINARY_PATH` | Direktori biner `sqlite3`, diakhiri garis miring. Kosong = ikut PATH |
 
@@ -417,11 +422,41 @@ Prinsipnya: hanya yang **tidak bisa dibuat ulang**. Sisanya lahir dari git + `co
 
 **`.env` sengaja ada di `exclude`.** Isinya `APP_KEY` beserta semua kredensial, sementara arsip backup justru file yang paling mungkin disalin keluar server. Baris itu juga jaring pengaman kalau suatu saat `include` diperluas ke `base_path()` — jangan dihapus.
 
-Konsekuensi yang harus disadari: **arsip ini tidak cukup untuk memulihkan aplikasi sendirian.** Restore = `git clone` + `composer install` + `.env` (dari brankas terpisah) + bongkar arsip + import dump.
+Konsekuensi yang harus disadari: **arsip ini tidak cukup untuk memulihkan aplikasi sendirian.** Restore = `git clone` + `composer install` + `.env` (dari brankas terpisah) + bongkar arsip + import dump — langkah lengkapnya di bagian *Restore*.
 
 ### Enkripsi
 
-Arsip dienkripsi AES-256 dengan `BACKUP_ARCHIVE_PASSWORD` dari `.env`.
+Arsip dienkripsi AES-256. Passwordnya diambil dari `backup_schedules.archive_password` (disetel lewat tombol **Password Arsip** di panel), dan **jatuh ke `BACKUP_ARCHIVE_PASSWORD` di `.env`** kalau kolom itu masih kosong. Fallback ini yang membuat instalasi lama tetap menghasilkan arsip yang bisa dibuka pemiliknya — jangan dihapus.
+
+Kolomnya bertipe `encrypted`, jadi dump database yang bocor tidak sekalian menyerahkan kunci tiap arsip di dalamnya. Konsekuensinya **`APP_KEY` ikut jadi taruhan**: rotasi `APP_KEY` membuat nilai itu tidak bisa didekripsi lagi, sama saja dengan kehilangan passwordnya.
+
+#### Jebakan melingkar: password ada di dalam benda yang ia lindungi
+
+Password yang disetel lewat panel hidup di database — database yang sama yang arsip itu backup. Kehilangan database berarti kehilangan password, dan **arsip yang dibuat setelah password disetel tidak bisa dibuka lagi**. Persis kebalikan dari gunanya backup.
+
+Sudah kejadian di repo ini: arsip `2026-08-09-15-10-59.zip` dikunci password yang disetel lewat panel, lalu databasenya di-reset. Arsip itu tidak bisa dibuka dengan `BACKUP_ARCHIVE_PASSWORD` maupun password mana pun yang masih tercatat — sementara `2026-08-09-14-50-02.zip`, yang dibuat sebelum password panel disetel, tetap terbuka dengan nilai `.env`.
+
+Yang menahan supaya ini tidak lebih sering terjadi:
+
+- Fallback ke `BACKUP_ARCHIVE_PASSWORD` di `.env`. Selama kolom di panel **tidak pernah diisi**, password hidup di `.env` yang tidak ikut mati bersama database.
+- Helper text di formnya menyuruh menyimpan salinan di luar server.
+
+Keduanya bukan pengaman teknis — tidak ada tes yang bisa menangkap password yang cuma ada di satu tempat. **Setiap kali password disetel lewat panel, salinannya wajib masuk password manager di detik yang sama.** Kalau tidak siap melakukan itu, biarkan kolomnya kosong dan pakai `.env` saja.
+
+**Password harus sampai ke dua jalur berbeda**, dan itu alasan `BackupSchedule::applyArchivePassword()` dipanggil dua kali di tempat berbeda:
+
+| Jalur | Pemanggil | Kenapa perlu sendiri |
+|---|---|---|
+| Tombol **Backup Sekarang** | `App\Jobs\RunBackup::handle()` | Queue worker proses panjang — `routes/console.php` hanya dieksekusi sekali saat worker boot, nilainya sudah basi saat tombol diklik |
+| Scheduler & `php artisan backup:run` | `routes/console.php` | Scheduler menjalankan artisan sebagai proses baru; file ini dieksekusi saat boot proses itu, dan barisnya sudah terbaca di sana (nol query tambahan) |
+
+Melewatkan salah satunya = separuh arsip terkunci password berbeda, dan itu baru ketahuan **saat restore**. Yang mengunci: `test_the_queued_job_applies_the_password_before_running_backup` dan `test_the_panel_password_wins_over_the_env_password`.
+
+Cara kerjanya menumpang perilaku paketnya: spatie mengikat `Config::class` dengan `$app->scoped()` yang membaca `config('backup')` secara lazy, jadi `config(['backup.backup.password' => ...])` yang diset **sebelum** `backup:run` jalan sudah cukup — tidak perlu menyentuh paketnya.
+
+**Password tidak boleh masuk `activity_log`.** `LogsActivity` di `BackupSchedule` memakai `logFillable()`, yang akan menyalin nilainya mentah-mentah ke tabel yang bisa dibaca siapa pun pemegang `lihat-log-aktivitas` — kelompok yang jauh lebih luas daripada `kelola-backup`. Karena itu ada `->logExcept(['archive_password'])`, dan perubahannya dicatat manual di `Backups::savePassword()` sebagai event `password-arsip-diubah` **tanpa nilainya**. Dikunci `test_the_password_never_reaches_the_activity_log`.
+
+Form-nya sengaja **memperlihatkan password yang sedang berlaku** (`revealable`, prefilled). Field write-only justru mengunci orang yang halaman ini dibuat untuknya: yang butuh membuka arsip tidak punya cara lain mengetahui kuncinya.
 
 **Password hilang = seluruh arsip hilang selamanya.** Tidak ada jalur pemulihan. Simpan salinannya di luar server — password manager, bukan hanya `.env` yang ikut mati bersama mesinnya. Mengganti password tidak membuka arsip lama; arsip tetap terkunci dengan password saat ia dibuat.
 
@@ -438,13 +473,117 @@ Kalau `7z` tidak tersedia, PHP sendiri bisa (libzip sudah mendukung AES):
 php -r '$z = new ZipArchive; $z->open($argv[1]); $z->setPassword($argv[2]); $z->extractTo($argv[3]);' -- ARSIP.zip PASSWORD ./tujuan
 ```
 
-### Restore database
+### Restore
 
-```bash
-gunzip -c db-dumps/sqlite-sqlite-database.sql.gz | sqlite3 database/database.sqlite
+Isi arsip cuma dua, jadi restore juga dua hal: dump database dan `storage/app/public`. Sisanya (kode, `vendor/`, `.env`) datang dari luar arsip — lihat *Yang di-backup — dan yang sengaja tidak*.
+
+**`APP_KEY` harus sama dengan saat arsip dibuat.** Ia tidak ikut di dalam arsip, jadi harus datang dari `.env` yang disimpan terpisah. Beda `APP_KEY` = tiap nilai terenkripsi di database tidak bisa dibaca lagi — termasuk `backup_schedules.archive_password` — dan semua sesi login batal.
+
+#### Lewat panel — tombol Pulihkan
+
+Aksi baris **Pulihkan** di `/admin/backups`, dijalankan `App\Support\Backup\RestoreArchive`. Izinnya `pulihkan-backup`, **bukan** `kelola-backup`: restore mengganti tabel `users` dengan versi arsip, jadi pemegangnya bisa menghidupkan akun lama yang passwordnya ia tahu atau membatalkan pencabutan role. Itu kekuasaan lain dari "boleh mengunduh arsip".
+
+Aksinya `->visible()` pada izin itu **dan** `abort_unless` di dalam `restore()`. Yang kedua bukan duplikasi: action Filament tidak punya otorisasi otomatis, jadi aksi yang bisa dipanggil namanya bisa dipanggil siapa saja — lihat *Action Filament TIDAK ikut canEdit()/canDelete()*. Konfirmasinya mengetik ulang **nama berkas**, bukan kata generik, karena itu satu-satunya konfirmasi yang juga menangkap klik di baris yang salah.
+
+**Database hidup tidak pernah ditulisi.** Ini poros seluruh desainnya:
+
+```
+ekstrak arsip → impor dump ke file sqlite SEMENTARA → validasi → rename() ke tempatnya
+      (lambat, nol dampak)                                        (milidetik, atomik)
 ```
 
-Dump-nya berisi `CREATE TABLE IF NOT EXISTS`, jadi restore ke database yang sudah berisi tabel **tidak** menimpa apa pun — malah menghasilkan campuran data lama dan baru. Kosongkan dulu file databasenya kalau ingin benar-benar mengembalikan keadaan.
+Dua hal yang mahal kalau dibalik:
+
+- **Impor langsung ke `database.sqlite` lalu timeout di tengah** meninggalkan database dengan sebagian tabel terpulihkan dan sebagian tidak, tanpa jalan pulang. Dengan staging, timeout cuma membuang file temp.
+- **Restore TIDAK boleh lewat queue**, walau itu jawaban yang biasa untuk pekerjaan lambat. `QUEUE_CONNECTION=database`: worker mencatat job yang sedang jalan di tabel `jobs` — tabel yang sedang diganti. Job restore akan menarik lantai dari bawah kakinya, dan tabel `jobs` hasil restore bisa berisi job lama dari masa arsip yang ikut dieksekusi. `RunBackup` memang milik queue; ini kebalikannya.
+
+Pengaman lain, semuanya dikunci `BackupRestoreTest`:
+
+| Pengaman | Kenapa |
+|---|---|
+| Hanya SQLite | Driver lain berhenti di awal, ketimbang setengah jalan lewat jalur kode yang salah |
+| Entri zip disaring (`db-dumps/`, `storage/app/public/`, tanpa `..`) | Ekstraktor yang menulis ke mana pun nama entri menunjuk berhenti aman begitu ada tombol unggah arsip |
+| Dump tanpa tabel `users`/`migrations` ditolak | Gagal sebelum swap, bukan sesudah |
+| Dump dengan nol pengguna ditolak | Restore-nya "berhasil" lalu tidak ada yang bisa login untuk membatalkannya |
+| Salinan pengaman ke `storage/app/pre-restore/` | Satu-satunya jalan pulang. Diambil tepat sebelum `rename()` |
+| `-wal` dan `-shm` dihapus setelah swap | Milik database yang baru saja pergi; kalau ditinggal, SQLite memutar ulang tulisan yang justru mau dibatalkan |
+| Kunci baris lewat `resolveBackup()` | Sama seperti Unduh dan Hapus — kunci baris itu input pengguna |
+
+Setelah swap: `migrate --force` (arsip membawa tabel `migrations`-nya sendiri, jadi hanya migrasi yang lebih baru yang jalan) lalu `forgetCachedPermissions()`. Yang terakhir wajib — cache permission menyimpan **id**, dan id di database hasil restore berbeda.
+
+**Yang belum ditangani: `RestoreArchive` tidak menjalankan `RolePermissionSeeder`.** Migrasi mengembalikan struktur, bukan baris. Memulihkan arsip yang lebih tua dari case terbaru di `App\Enums\Permission` meninggalkan izin itu tanpa baris di tabel `permissions` — dan izin yang tidak ada di tabel selalu `false`, jadi menunya hilang diam-diam untuk semua orang kecuali `super-admin` yang lolos lewat `Gate::before`. Sudah terjadi saat memulihkan arsip 14:50 di repo ini. Sampai `settleApplication()` ikut memanggil seeder, **jalankan manual setelah restore lewat panel**:
+
+```bash
+php artisan db:seed --class=RolePermissionSeeder
+```
+
+**Yang menjalankan pasti logout**, karena tabel `sessions` ikut diganti. Karena itu aksinya redirect ke halaman login tanpa notifikasi: notifikasi Filament diflash ke session yang barusan lenyap. Layar login itulah pesannya.
+
+Salinan di `storage/app/pre-restore/` **tidak pernah dibersihkan otomatis** — masing-masing sebesar database saat itu. Hapus manual setelah yakin hasil restore benar.
+
+#### Lewat CLI
+
+Dipakai saat panelnya sendiri tidak bisa dibuka, atau saat databasenya bukan SQLite.
+
+Langkahnya sengaja meniru `RestoreArchive`: bangun dulu di file sementara, baru tukar. Jangan mengimpor langsung ke `database/database.sqlite`.
+
+```bash
+# 1. Salinan pengaman — satu-satunya jalan pulang.
+mkdir -p storage/app/pre-restore
+cp database/database.sqlite storage/app/pre-restore/manual-$(date +%Y-%m-%d-%H-%M-%S).sqlite
+
+# 2. Ekstrak arsip (butuh password, lihat bagian Enkripsi).
+mkdir -p /tmp/restore
+7z x -o/tmp/restore -p"$BACKUP_ARCHIVE_PASSWORD" \
+  storage/app/backups/school-management/2026-08-09-01-30-00.zip
+gunzip -c /tmp/restore/db-dumps/*.sql.gz > /tmp/restore/dump.sql
+
+# 3. Bangun database pengganti DI SEBELAH yang asli — harus di database/,
+#    karena rename() cuma atomik dalam satu filesystem.
+sqlite3 -bail database/.restore-manual.sqlite < /tmp/restore/dump.sql
+
+# 4. Validasi sebelum menyentuh yang hidup. Nol user = jangan diteruskan.
+sqlite3 database/.restore-manual.sqlite 'select count(*) from users;'
+
+# 5. Tukar. Ini satu-satunya langkah yang tidak bisa dibatalkan.
+mv database/.restore-manual.sqlite database/database.sqlite
+rm -f database/database.sqlite-wal database/database.sqlite-shm
+
+# 6. Berkas unggahan.
+cp -a /tmp/restore/storage/app/public/. storage/app/public/
+
+# 7. Samakan skema, isi, dan cache dengan kode yang sedang jalan.
+php artisan migrate --force
+php artisan db:seed --class=RolePermissionSeeder
+php artisan permission:cache-reset
+php artisan config:clear
+```
+
+Empat hal yang tidak kelihatan dari perintahnya:
+
+**Kenapa staging, bukan impor langsung.** Dump berisi `CREATE TABLE IF NOT EXISTS` dan `INSERT` polos. Diimpor ke database yang masih berisi tabel, ia **tidak menimpa apa pun** — hasilnya campuran data lama dan data arsip, `INSERT`-nya bentrok primary key lalu berhenti separuh jalan, dan exit code-nya tetap 0. File kosong yang baru dibuat tidak punya masalah itu, dan kegagalan di langkah 3 tidak menyentuh apa pun.
+
+**`composer run dev` tidak perlu dimatikan.** Setelah `mv`, proses yang masih memegang file lama menulis ke inode yang sudah dilepas, bukan ke database baru. Tulisan itu hilang bersama filenya — yang justru diinginkan. Ini keuntungan langsung dari swap; jalur "kosongkan lalu impor" memang mengharuskan semuanya berhenti.
+
+**Restore memundurkan skema *dan* isi seeder** — dan keduanya butuh langkah berbeda. `migrate --force` mengembalikan strukturnya (arsip membawa tabel `migrations` sendiri, jadi hanya migrasi yang lebih baru yang jalan). Tapi migrasi tidak menambah **baris**: role dan permission yang lahir setelah arsip dibuat tetap hilang sampai `RolePermissionSeeder` dijalankan. Terjadi persis begitu saat memulihkan arsip 14:50 di repo ini — `pulihkan-backup` hilang, dan tombol Pulihkan mati untuk semua orang kecuali `super-admin` yang lolos lewat `Gate::before`.
+
+**`permission:cache-reset` bukan formalitas.** Cache permission Spatie menyimpan **id**, bukan nama, dan database hasil restore punya id yang lain. Cache basi adalah cara paling umum orang mengunci dirinya dari `/admin` padahal datanya utuh.
+
+Verifikasi sebelum membuang salinannya:
+
+```bash
+php artisan tinker --execute="
+\$u = App\Models\User::first();
+echo 'user: '.\$u->email.' | role: '.\$u->getRoleNames()->implode(', ').PHP_EOL;
+echo 'role: '.App\Models\Role::count().' | izin: '.App\Models\Permission::count().PHP_EOL;
+echo 'log: '.Spatie\Activitylog\Models\Activity::count().PHP_EOL;
+echo 'akses panel: '.var_export(\$u->canAccessPanel(Filament\Facades\Filament::getPanel('admin')), true).PHP_EOL;
+"
+```
+
+Jumlah izin harus sama dengan jumlah case di `App\Enums\Permission`. Kalau kurang, langkah seeder terlewat.
+
+Gagal? `cp storage/app/pre-restore/manual-*.sqlite database/database.sqlite`.
 
 ### Butuh biner `sqlite3`, bukan cuma PHP
 
@@ -506,6 +645,8 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupConfigurationTest` | Tujuan backup, `.env` tidak ikut terarsip, nama pantauan cocok, jadwal terdaftar |
 | `BackupPageTest` | Izin halaman backup, tombol unduh/hapus, arsip terbaru terlindungi, kunci baris palsu ditolak |
 | `BackupScheduleTest` | Default mingguan, cron tiap frekuensi, scheduler pakai jadwal user, tabel hilang tidak bikin crash, ambang monitor ikut frekuensi |
+| `BackupArchivePasswordTest` | Password panel menang atas `.env`, fallback ke `.env`, sampai ke kedua jalur backup, terenkripsi di DB, tidak bocor ke `activity_log` |
+| `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
 
 `tests/Feature/ExampleTest.php` dan `tests/Unit/ExampleTest.php` masih bawaan Laravel. Yang Feature menjaga halaman `/` (view `welcome`) tetap 200 — kalau `routes/web.php` diganti, tes itu ikut diganti atau dihapus, jangan dibiarkan merah.
 
@@ -689,11 +830,13 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini tidak membuat user, jadi aman di produksi. Aman juga diulang tiap rilis: ia menambah, tidak pernah mencabut, jadi penyesuaian izin yang dibuat lewat panel tetap utuh.
 7. **Jangan jalankan `db:seed` polos** — itu ikut menjalankan `AdminUserSeeder` yang memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu `assignRole('super-admin')` manual. Tanpa role, akun barunya kena 403.
 8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` dan seluruh perintah backup tidak pernah jalan — `activity_log` tumbuh tanpa batas dan tidak ada arsip yang pernah dibuat.
-9. `sudo apt install sqlite3` — `backup:run` butuh binernya, ekstensi PHP saja tidak cukup.
-10. Isi `BACKUP_ARCHIVE_PASSWORD` di `.env` **dan simpan salinannya di luar server**. Kosong = arsip tidak terenkripsi, tanpa peringatan apa pun.
+9. `sudo apt install sqlite3` — `backup:run` **dan** tombol Pulihkan sama-sama butuh binernya, ekstensi PHP saja tidak cukup.
+10. Setel password arsip lewat tombol **Password Arsip** di `/admin/backups` (atau isi `BACKUP_ARCHIVE_PASSWORD` di `.env` sebagai cadangan), **lalu simpan salinannya di luar server**. Keduanya kosong = arsip tidak terenkripsi, tanpa peringatan apa pun. Password disimpan terenkripsi dengan `APP_KEY` — rotasi `APP_KEY` = password hilang. Password yang disetel lewat panel hidup di database yang ia backup: kehilangan database = kehilangan password = arsip mati. Lihat *Jebakan melingkar* di bagian Enkripsi.
 11. Setel SMTP sungguhan. Dengan `MAIL_MAILER=log`, notifikasi backup gagal hanya masuk file log dan tidak dibaca siapa pun.
 12. Jalankan `php artisan backup:run` sekali secara manual, lalu `php artisan backup:list`. Kegagalan PATH `sqlite3` paling enak ketahuan sekarang, bukan jam 01:30 saat tidak ada yang melihat.
 13. Tambahkan disk luar (S3/rsync) ke `backup.destination.disks`. Arsip yang hanya duduk di disk yang sama dengan aplikasinya tidak menolong saat disknya yang mati.
+14. Jangan berikan `pulihkan-backup` ke siapa pun secara default. Pemegangnya bisa mengganti tabel `users` dengan versi arsip — lihat *Restore*. Berikan saat dibutuhkan, cabut setelahnya.
+15. Uji restore-nya **sekali** ke instalasi lain sebelum mempercayainya. Backup yang belum pernah dipulihkan belum terbukti backup. Ingat menjalankan `db:seed --class=RolePermissionSeeder` sesudahnya — lihat *Restore*.
 
 ## Verifikasi cepat
 
@@ -738,7 +881,7 @@ Output yang diharapkan:
 
 ```
 model-role: App\Models\Role
-izin: akses-panel-admin, kelola-backup, kelola-pengguna, kelola-role, lihat-log-aktivitas
+izin: akses-panel-admin, kelola-backup, kelola-pengguna, kelola-role, lihat-log-aktivitas, pulihkan-backup
 role: admin, developer, guru, karyawan, murid, super-admin
 admin-role: super-admin
 akses-panel: true

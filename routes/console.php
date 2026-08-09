@@ -40,6 +40,16 @@ Schedule::command('backup:clean')
 try {
     $backupSchedule = BackupSchedule::current();
 
+    // The scheduler runs `backup:run` as its own artisan process, and this file
+    // is evaluated during that process's boot -- which makes it the one place
+    // where the panel-configured archive password can reach a scheduled backup.
+    // The row is already loaded here, so this costs no extra query.
+    //
+    // Applied unconditionally, not only when the schedule is enabled: a manual
+    // `php artisan backup:run` from the shell has to produce an archive with
+    // the same password as the automatic ones.
+    $backupSchedule->applyArchivePassword();
+
     if ($backupSchedule->is_enabled) {
         Schedule::command('backup:run')
             ->cron($backupSchedule->cronExpression())

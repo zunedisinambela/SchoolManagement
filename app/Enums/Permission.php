@@ -22,6 +22,17 @@ enum Permission: string
     case KelolaBackup = 'kelola-backup';
 
     /**
+     * Deliberately separate from KelolaBackup.
+     *
+     * Restoring is not a read: it replaces the `users` table with the archive's
+     * version, which resurrects accounts whose passwords the restorer may know
+     * and undoes any role revoked since the archive was taken. That is a
+     * different power from "may download an archive", so it is a different
+     * permission.
+     */
+    case PulihkanBackup = 'pulihkan-backup';
+
+    /**
      * @return array<int, string>
      */
     public static function values(): array
@@ -37,6 +48,7 @@ enum Permission: string
             self::KelolaPengguna => __('Kelola pengguna'),
             self::KelolaRole => __('Kelola role & permission'),
             self::KelolaBackup => __('Kelola backup'),
+            self::PulihkanBackup => __('Pulihkan backup'),
         };
     }
 }

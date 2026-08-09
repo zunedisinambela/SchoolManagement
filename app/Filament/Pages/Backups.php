@@ -6,10 +6,12 @@ use App\Enums\BackupFrequency;
 use App\Enums\Permission;
 use App\Jobs\RunBackup;
 use App\Models\BackupSchedule;
+use App\Support\Backup\RestoreArchive;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\TimePicker;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
@@ -22,6 +24,8 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Number;
+use Illuminate\Validation\Rule;
+use RuntimeException;
 use Spatie\Backup\BackupDestination\Backup;
 use Spatie\Backup\BackupDestination\BackupDestination;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -141,6 +145,29 @@ class Backups extends Page implements HasTable
                 ])
                 ->action(fn (array $data) => $this->saveSchedule($data)),
 
+            Action::make('passwordArsip')
+                ->label(__('Password Arsip'))
+                ->icon(Heroicon::OutlinedKey)
+                ->modalHeading(__('Password enkripsi arsip'))
+                ->modalDescription(__('Arsip backup dikunci AES-256 dengan password ini. Password lama tetap dibutuhkan untuk membuka arsip yang sudah terlanjur dibuat — mengganti password di sini tidak membuka ulang arsip lama.'))
+                ->modalSubmitActionLabel(__('Simpan'))
+                // Prefilled with the password in force, revealable below. The
+                // point of this screen is that whoever has to open an archive
+                // can find out what unlocks it; a write-only field would leave
+                // the same person locked out that this was built for.
+                ->fillForm(fn (): array => ['archive_password' => BackupSchedule::current()->archivePassword()])
+                ->schema([
+                    TextInput::make('archive_password')
+                        ->label(__('Password'))
+                        ->password()
+                        ->revealable()
+                        ->autocomplete(false)
+                        ->required()
+                        ->minLength(8)
+                        ->helperText(__('Simpan salinannya di luar server. Password hilang = seluruh arsip tidak bisa dibuka, tanpa jalur pemulihan.')),
+                ])
+                ->action(fn (array $data) => $this->savePassword($data)),
+
             Action::make('backupSekarang')
                 ->label(__('Backup Sekarang'))
                 ->icon(Heroicon::OutlinedPlusCircle)
@@ -187,6 +214,38 @@ class Backups extends Page implements HasTable
                     ->label(__('Unduh'))
                     ->icon(Heroicon::OutlinedArrowDownTray)
                     ->action(fn (array $record): StreamedResponse => $this->download($record)),
+
+                Action::make('pulihkan')
+                    ->label(__('Pulihkan'))
+                    ->icon(Heroicon::OutlinedArrowUturnLeft)
+                    ->color('warning')
+                    // Restoring is not part of `kelola-backup`: it swaps in the
+                    // archive's `users` table wholesale. Hidden rather than
+                    // disabled, because there is no state in which the viewer
+                    // could earn the right by doing something else first.
+                    ->visible(fn (): bool => (bool) Filament::auth()->user()?->can(Permission::PulihkanBackup->value))
+                    ->modalHeading(fn (array $record): string => __('Pulihkan dari :berkas?', ['berkas' => $record['nama']]))
+                    ->modalDescription(__('Seluruh isi database sekarang diganti dengan isi arsip ini. Data yang masuk setelah arsip dibuat akan hilang. Kamu ikut logout karena tabel sesi juga ikut diganti. Salinan database sekarang disimpan otomatis sebelum penggantian.'))
+                    ->modalSubmitActionLabel(__('Pulihkan sekarang'))
+                    ->schema([
+                        TextInput::make('konfirmasi')
+                            ->label(__('Ketik nama berkasnya untuk melanjutkan'))
+                            ->placeholder(fn (array $record): string => $record['nama'])
+                            ->required()
+                            ->autocomplete(false)
+                            // Typing the filename, not a generic word: it is
+                            // the only confirmation that also catches clicking
+                            // restore on the wrong row, which for an
+                            // irreversible action is the likelier mistake.
+                            ->rule(fn (array $record) => Rule::in([$record['nama']]))
+                            ->validationMessages(['in' => __('Nama berkas tidak cocok.')]),
+
+                        Toggle::make('sertakan_unggahan')
+                            ->label(__('Sertakan berkas unggahan'))
+                            ->helperText(__('Menyalin isi storage/app/public dari arsip. Berkas yang lebih baru tidak dihapus, hanya ditimpa kalau namanya sama.'))
+                            ->default(true),
+                    ])
+                    ->action(fn (array $record, array $data) => $this->restore($record, $data)),
 
                 Action::make('hapus')
                     ->label(__('Hapus'))
@@ -247,6 +306,33 @@ class Backups extends Page implements HasTable
         Notification::make()
             ->title(__('Jadwal disimpan'))
             ->body(BackupSchedule::current()->refresh()->describe())
+            ->success()
+            ->send();
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function savePassword(array $data): void
+    {
+        BackupSchedule::current()->update([
+            'archive_password' => $data['archive_password'],
+        ]);
+
+        // Logged by hand rather than left to the model's LogsActivity: that
+        // trait excludes archive_password (see BackupSchedule), so the only
+        // change on the row is invisible to it and dontLogEmptyChanges() would
+        // drop the entry entirely. Rotating an encryption key is precisely the
+        // kind of event an audit trail exists for -- recorded here without the
+        // value, which is what made it unloggable in the first place.
+        activity('backup')
+            ->causedBy(Filament::auth()->user())
+            ->event('password-arsip-diubah')
+            ->log(__('Mengubah password enkripsi arsip backup'));
+
+        Notification::make()
+            ->title(__('Password arsip disimpan'))
+            ->body(__('Dipakai mulai backup berikutnya. Arsip lama tetap terkunci dengan password sebelumnya.'))
             ->success()
             ->send();
     }
@@ -323,6 +409,61 @@ class Backups extends Page implements HasTable
             },
             basename($backup->path()),
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function restore(array $record, array $data): void
+    {
+        // The visible() guard hides the button; this is the one that stops the
+        // request. Filament actions carry no automatic authorization, so an
+        // action reachable by name is reachable by anyone who knows the name.
+        abort_unless(
+            (bool) Filament::auth()->user()?->can(Permission::PulihkanBackup->value),
+            403,
+        );
+
+        $backup = $this->resolveBackup($record);
+        $user = Filament::auth()->user();
+        $name = basename($backup->path());
+
+        try {
+            $safetyCopy = (new RestoreArchive($backup))->restore(
+                includeUploads: (bool) ($data['sertakan_unggahan'] ?? true),
+            );
+        } catch (RuntimeException $e) {
+            Notification::make()
+                ->title(__('Restore dibatalkan'))
+                ->body($e->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            // Nothing was swapped in, so the session and the page are still
+            // intact -- the user stays where they are and can try another
+            // archive.
+            return;
+        }
+
+        // Written after the swap, so it lands in the restored activity_log and
+        // survives as the first entry explaining why everything older suddenly
+        // looks different. The causer id comes from the previous database and
+        // may not exist in this one, so the identifying details are duplicated
+        // into properties where they cannot dangle.
+        activity('backup')
+            ->causedBy($user)
+            ->withProperties([
+                'berkas' => $name,
+                'oleh' => $user?->email,
+                'salinan_sebelum_restore' => $safetyCopy,
+            ])
+            ->event('backup-dipulihkan')
+            ->log(__('Memulihkan database dari arsip :berkas', ['berkas' => $name]));
+
+        // No notification: it would be flashed into the session table that was
+        // just replaced. The login screen is the message.
+        redirect()->to(Filament::getLoginUrl());
     }
 
     protected function delete(array $record): void
