@@ -272,7 +272,7 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 
 ## Tes
 
-`composer run test` — 39 tes, semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
+`composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
 
 | File | Yang dijaga |
 |---|---|
@@ -308,6 +308,55 @@ User::factory()->withPermissions([Permission::AksesPanelAdmin])->create();
 ```
 
 Keduanya membuat role/permission-nya sendiri kalau seeder belum jalan.
+
+## Menambah modul baru
+
+Contoh: modul Siswa. Urutan ini menyentuh semua subsistem yang sudah ada — melewati satu langkah biasanya baru ketahuan jauh belakangan.
+
+**1. Migrasi + model**
+
+```bash
+php artisan make:model Siswa -m
+php artisan migrate
+```
+
+**2. Pasang audit log** di modelnya — lihat bagian *Menambah model baru ke audit log*. Kalau ada kolom sensitif (NIK, nomor HP wali), tambahkan `->logExcept([...])`.
+
+**3. Tambah permission** ke `app/Enums/Permission.php`, lalu seed:
+
+```php
+case LihatSiswa = 'lihat-siswa';
+case KelolaSiswa = 'kelola-siswa';
+```
+
+```bash
+php artisan db:seed --class=RolePermissionSeeder
+```
+
+Jangan lewat, case enum tanpa baris di tabel `permissions` **selalu** `false`.
+
+**4. Buat resource Filament**
+
+```bash
+php artisan make:filament-resource Siswa --generate --view
+```
+
+**5. Pasang `canAccess()`** di resource — tanpa ini menunya terbuka untuk semua yang bisa masuk panel:
+
+```php
+public static function canAccess(): bool
+{
+    return (bool) Filament::auth()->user()?->can(Permission::LihatSiswa->value);
+}
+```
+
+**6. Jaga setiap `DeleteAction` / `EditAction`** dengan `->disabled(...)` kalau ada aturan yang membatasi. Baca bagian *Action Filament TIDAK ikut canEdit/canDelete* — ini bukan opsional.
+
+**7. Tulis tesnya.** Minimal: user tanpa permission dapat 403, user dengan permission bisa render, dan setiap pengaman diuji dengan **memanggil tombolnya**, bukan memanggil `can*()`.
+
+**8. Bahasa.** Label dibungkus `__()`. Teks bawaan Filament sudah otomatis Indonesia, yang perlu diterjemahkan hanya milik sendiri.
+
+Terakhir: `./vendor/bin/pint` lalu `composer run test`.
 
 ## Tooling dev
 
