@@ -19,6 +19,8 @@ enum Permission: string
 
     case KelolaRole = 'kelola-role';
 
+    case KelolaBackup = 'kelola-backup';
+
     /**
      * @return array<int, string>
      */
@@ -34,6 +36,7 @@ enum Permission: string
             self::LihatLogAktivitas => __('Lihat log aktivitas'),
             self::KelolaPengguna => __('Kelola pengguna'),
             self::KelolaRole => __('Kelola role & permission'),
+            self::KelolaBackup => __('Kelola backup'),
         };
     }
 }

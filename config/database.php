@@ -42,6 +42,25 @@ return [
             'journal_mode' => null,
             'synchronous' => null,
             'transaction_mode' => 'DEFERRED',
+
+            /*
+             * Dibaca oleh spatie/laravel-backup lewat spatie/db-dumper.
+             *
+             * Dumper SQLite tidak menyalin filenya — ia menjalankan biner
+             * `sqlite3` di shell (`echo 'BEGIN IMMEDIATE;\n.dump' | sqlite3`).
+             * Artinya `backup:run` butuh sqlite3 CLI terpasang, terpisah dari
+             * ekstensi PDO sqlite milik PHP. PHP bisa jalan sempurna sementara
+             * `backup:run` gagal karena binernya tidak ada.
+             *
+             * Kosong = cari lewat PATH. PATH milik cron jauh lebih sempit
+             * daripada PATH shell interaktif, jadi kalau `backup:run` manual
+             * berhasil tapi lewat scheduler gagal, isi DB_DUMP_BINARY_PATH
+             * dengan direktorinya (harus diakhiri garis miring), contoh
+             * `/usr/bin/`.
+             */
+            'dump' => [
+                'dump_binary_path' => env('DB_DUMP_BINARY_PATH', ''),
+            ],
         ],
 
         'mysql' => [

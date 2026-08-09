@@ -1,5 +1,7 @@
 <?php
 
+use App\Models\BackupSchedule;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -12,4 +14,46 @@ Artisan::command('inspire', function () {
 // config/activitylog.php (`clean_after_days`, currently 365).
 Schedule::command('activitylog:clean --force')
     ->dailyAt('02:00')
+    ->onOneServer();
+
+// Retention runs daily regardless of how often backups are taken -- it prunes
+// by age, so running it on a day with no new archive is a no-op.
+//
+// It is not coupled to the backup time: DefaultStrategy never deletes the
+// newest archive, so the two commands are safe in either order. Kept at 01:00,
+// away from activitylog:clean at 02:00, so the two never touch
+// database.sqlite at the same moment.
+Schedule::command('backup:clean')
+    ->dailyAt('01:00')
+    ->onOneServer();
+
+// The backup schedule itself is user-editable from /admin/backups, so it is
+// read from the database rather than pinned here. Default is weekly.
+//
+// This file is evaluated on EVERY artisan invocation, including `migrate` on a
+// database where `backup_schedules` does not exist yet. Without the catch,
+// reading it would fail before the migration that creates it could ever run --
+// a fresh install would be unable to boot far enough to fix itself.
+//
+// A missing table therefore means "no schedule registered", not a crash. Once
+// the migration runs, the schedule appears on the next artisan call.
+try {
+    $backupSchedule = BackupSchedule::current();
+
+    if ($backupSchedule->is_enabled) {
+        Schedule::command('backup:run')
+            ->cron($backupSchedule->cronExpression())
+            ->onOneServer()
+            ->withoutOverlapping();
+    }
+} catch (QueryException) {
+    // Table not migrated yet.
+}
+
+// Checks the newest archive's age and total size against `monitor_backups` in
+// config/backup.php, and notifies when it fails. Without this, a backup that
+// silently stopped running looks exactly like one that is working — the only
+// difference is a folder nobody opens.
+Schedule::command('backup:monitor')
+    ->dailyAt('07:00')
     ->onOneServer();

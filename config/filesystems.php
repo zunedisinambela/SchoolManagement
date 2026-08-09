@@ -47,6 +47,23 @@ return [
             'report' => false,
         ],
 
+        /*
+         * Tujuan arsip spatie/laravel-backup. Sengaja disk sendiri, bukan
+         * menumpang `local`: isinya arsip terenkripsi yang tidak boleh
+         * tercampur dengan file privat aplikasi, dan supaya gampang
+         * dialihkan ke S3 nanti tanpa menyentuh config/backup.php.
+         *
+         * Ini masih satu mesin dan satu disk dengan aplikasinya, jadi belum
+         * melindungi dari disk mati atau server hilang. Salin keluar
+         * (S3/rsync) sebelum dianggap backup sungguhan.
+         */
+        'backups' => [
+            'driver' => 'local',
+            'root' => storage_path('app/backups'),
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

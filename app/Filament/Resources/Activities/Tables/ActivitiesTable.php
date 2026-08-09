@@ -49,6 +49,9 @@ class ActivitiesTable
                         'failed', 'lockout' => 'danger',
                         'role-diberikan', 'izin-diberikan' => 'success',
                         'role-dicabut', 'izin-dicabut' => 'warning',
+                        'backup-dijalankan' => 'info',
+                        'backup-diunduh' => 'warning',
+                        'backup-dihapus' => 'danger',
                         default => 'gray',
                     }),
                 TextColumn::make('description')
@@ -95,6 +98,9 @@ class ActivitiesTable
                         'role-dicabut' => __('Role dicabut'),
                         'izin-diberikan' => __('Izin diberikan'),
                         'izin-dicabut' => __('Izin dicabut'),
+                        'backup-dijalankan' => __('Backup dijalankan'),
+                        'backup-diunduh' => __('Backup diunduh'),
+                        'backup-dihapus' => __('Backup dihapus'),
                     ]),
                 SelectFilter::make('log_name')
                     ->label(__('Kanal'))
