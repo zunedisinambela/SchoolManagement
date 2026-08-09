@@ -14,10 +14,11 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Audit log | spatie/laravel-activitylog 5 |
 | Role & permission | spatie/laravel-permission 8 |
 | Backup | spatie/laravel-backup 10 |
+| WebSocket | laravel/reverb 1 + laravel-echo & pusher-js |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, serta backup terjadwal lengkap dengan password arsip dan restore dari panel.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta broadcasting WebSocket yang terpasang tapi belum menyiarkan satu event pun.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
@@ -28,10 +29,11 @@ Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/permission
 ## Perintah
 
 ```bash
-composer run dev      # serve + queue:listen + pail (log) + vite, sekaligus
+composer run dev      # serve + queue:listen + reverb + pail (log) + vite, sekaligus
 composer run test     # config:clear lalu artisan test
 composer run setup    # install deps, generate key, migrate, build asset
 ./vendor/bin/pint     # format kode PHP
+php artisan reverb:start  # server WebSocket saja, tanpa sisa proses dev
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
 # restore: lewat tombol Pulihkan di /admin/backups, atau langkah CLI di bagian Restore
@@ -645,6 +647,101 @@ Kredensial S3 sudah ada tempatnya di `config/filesystems.php`, tinggal isi `AWS_
 
 Ganti `DB_CONNECTION` saja tidak cukup — `backup.source.databases` mengikuti env itu, tapi binernya berubah (`mysqldump`/`pg_dump`) dan harus ikut terpasang di server.
 
+## Broadcasting (laravel/reverb)
+
+Server WebSocket sendiri, dipasang lewat `php artisan install:broadcasting --reverb`. Belum ada satu pun event yang di-broadcast — yang sudah jadi baru fondasinya, sama seperti sisa repo ini.
+
+| Berkas | Isi |
+|---|---|
+| `config/reverb.php` | Server, aplikasi, dan penskalaan |
+| `config/broadcasting.php` | Koneksi `reverb`, `pusher`, `ably`, `log`, `null` |
+| `routes/channels.php` | Otorisasi channel privat — didaftarkan di `bootstrap/app.php` |
+| `resources/js/echo.js` | Klien Echo, diimpor dari `resources/js/app.js` |
+
+```bash
+php artisan reverb:start           # jalankan server WebSocket (0.0.0.0:8080)
+php artisan reverb:start --debug   # plus dump tiap pesan masuk/keluar
+php artisan reverb:restart         # suruh worker yang jalan berhenti dengan rapi
+```
+
+`reverb:restart` **tidak menyalakan apa pun** — ia cuma menaruh sinyal supaya worker yang sedang jalan berhenti di titik aman. Yang menghidupkannya lagi adalah supervisor. Dijalankan tanpa supervisor, servernya mati dan tidak kembali.
+
+`composer run dev` sudah membawa `reverb:start` sebagai proses ke-3, bertetangga dengan queue.
+
+### Reverb bicara protokol Pusher
+
+Itu sebabnya kliennya tetap `pusher-js` + `laravel-echo`, dan `broadcaster: 'reverb'` di `echo.js` sebenarnya cuma preset Pusher yang diarahkan ke host sendiri. Konsekuensi praktisnya: dokumentasi, tooling debug, dan library klien Pusher mana pun tetap berlaku — yang hilang cuma tagihan per-pesan dan ketergantungan ke layanan luar.
+
+### Kredensial
+
+| Key | Isi |
+|---|---|
+| `REVERB_APP_ID`, `REVERB_APP_KEY`, `REVERB_APP_SECRET` | Identitas aplikasi. Digenerate saat instalasi |
+| `REVERB_HOST`, `REVERB_PORT`, `REVERB_SCHEME` | Yang dipakai **server PHP** saat menerbitkan pesan |
+| `VITE_REVERB_*` | Yang dipakai **browser** saat menyambung |
+
+`VITE_*` di-inline ke bundel saat `npm run build` — **bukan rahasia**, dan memang begitu desainnya: `REVERB_APP_KEY` publik, `REVERB_APP_SECRET` tidak pernah ikut ke frontend. Karena tertanam di bundel, **mengubah `REVERB_HOST`/`REVERB_PORT` mengharuskan build ulang** — `config:clear` saja tidak cukup dan gejalanya berupa browser yang tetap menyambung ke alamat lama.
+
+`REVERB_HOST` di `.env` dipakai dua arah dengan arti berbeda. Di produksi keduanya biasanya berbeda: server menerbitkan ke `127.0.0.1`, browser menyambung ke domain publik lewat `wss://` di port 443. Pisahkan nilainya, jangan biarkan `VITE_REVERB_HOST` ikut `${REVERB_HOST}` begitu saja seperti default instalasi.
+
+### Produksi butuh reverse proxy dan supervisor
+
+Dua hal yang tidak terlihat dari `reverb:start`:
+
+- **`reverb:start` adalah proses yang harus terus hidup**, bukan perintah sekali jalan. Tanpa supervisor (systemd/supervisord), ia mati bersama sesi SSH dan tidak ada yang menyalakannya lagi. Ini kelas masalah yang sama dengan queue worker.
+- **Browser di `https://` menolak menyambung ke `ws://`.** Nginx harus mem-proxy `wss://` ke port 8080 dengan header `Upgrade`/`Connection`, kalau tidak koneksi ditolak di sisi klien tanpa jejak apa pun di log server.
+
+Batas file descriptor juga ikut berlaku: tiap koneksi WebSocket = satu file descriptor, jadi `ulimit -n` bawaan (1024) adalah plafon jumlah pengguna yang tersambung.
+
+### Otorisasi channel
+
+`routes/channels.php` baru berisi channel bawaan `App.Models.User.{id}` yang cuma mencocokkan id. Channel apa pun yang menyiarkan data terbatas **wajib mengecek permission**, bukan sekadar "user login" — closure yang mengembalikan `true` polos membuat channel itu terbuka untuk semua akun.
+
+```php
+Broadcast::channel('backup', fn (User $user) => $user->can(Permission::KelolaBackup->value));
+```
+
+Pakai enum, jangan string mentah — aturannya sama dengan seluruh repo ini, lihat *Nama role & permission ada di enum*.
+
+**`super-admin` otomatis lolos** lewat `Gate::before`, karena `can()` melewati gate yang sama. Tidak perlu dikecualikan manual.
+
+Closure ini dijalankan lewat route `POST /broadcasting/auth` yang didaftarkan otomatis oleh `withRouting(channels: ...)`. Route itu bermiddleware `web`, jadi otorisasinya bersandar pada **session yang sama dengan panel admin** — bukan token terpisah. Dua konsekuensi:
+
+- Kalau nanti ada klien di luar browser (mobile, API), ia butuh jalur auth sendiri; session cookie tidak sampai ke sana.
+- Restore backup mengganti tabel `sessions`, jadi setiap koneksi WebSocket privat ikut kehilangan dasar otorisasinya bersamaan dengan logout — lihat *Restore*.
+
+### Panel Filament belum memuat Echo
+
+Jebakan yang paling mungkin memakan waktu di repo ini. `resources/js/app.js` — satu-satunya berkas yang mengimpor `echo.js` — hanya dirujuk dari `resources/views/welcome.blade.php` lewat `@vite`. **Panel Filament punya pipeline asset sendiri dan tidak pernah memuat berkas itu.** Artinya `window.Echo` `undefined` di seluruh `/admin`, sementara `/` (halaman welcome bawaan Laravel) justru punya — kebalikan dari yang dibutuhkan, karena panel itulah satu-satunya UI sungguhan di sini.
+
+Belum dikerjakan karena belum ada event yang disiarkan. Saat dibutuhkan, **dua langkah**, dan yang pertama gampang terlewat:
+
+**1. Jadikan `echo.js` entry Vite.** Sekarang ia bukan entry — ia ikut terbundel ke dalam `app.js`, jadi tidak punya baris sendiri di `public/build/manifest.json`. Memanggil `Vite::asset('resources/js/echo.js')` tanpa langkah ini melempar *"Unable to locate file in Vite manifest"*, dan pesannya tidak menyebut penyebab sesungguhnya. Tambahkan ke `vite.config.js`:
+
+```js
+input: ['resources/css/app.css', 'resources/js/app.js', 'resources/js/echo.js'],
+```
+
+**2. Daftarkan ke panel** lewat `FilamentAsset` di sebuah service provider:
+
+```php
+use Filament\Support\Assets\Js;
+use Filament\Support\Facades\FilamentAsset;
+use Illuminate\Support\Facades\Vite;
+
+FilamentAsset::register([
+    Js::make('echo', Vite::asset('resources/js/echo.js'))->module(),
+]);
+```
+
+`->module()` wajib — `echo.js` memakai `import`, dan tanpa `type="module"` browser menolaknya.
+
+Setelah `echo.js` jadi entry, **lepaskan `import './echo'` dari `app.js`** kalau halaman welcome tetap dipertahankan. Kalau tidak, halaman itu memuat Echo dua kali: sekali lewat bundel `app.js`, sekali lewat entry baru. Dua instance `window.Echo` = dua koneksi WebSocket per tab, dan yang belakangan menimpa yang duluan sehingga listener yang sudah terpasang diam-diam berhenti menerima.
+
+### `BROADCAST_CONNECTION` sekarang `reverb`, bukan `log`
+
+Selama belum ada event yang di-broadcast, ini tidak berdampak. Begitu ada, event `ShouldBroadcast` yang diterbitkan **saat server Reverb mati** akan gagal terkirim — dan karena `ShouldBroadcast` lewat queue, kegagalannya mendarat di `failed_jobs`, bukan di layar. Untuk mematikan sementara tanpa menyentuh kode: `BROADCAST_CONNECTION=log`.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -663,6 +760,17 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupScheduleTest` | Default mingguan, cron tiap frekuensi, scheduler pakai jadwal user, tabel hilang tidak bikin crash, ambang monitor ikut frekuensi |
 | `BackupArchivePasswordTest` | Password panel menang atas `.env`, fallback ke `.env`, sampai ke kedua jalur backup, terenkripsi di DB, tidak bocor ke `activity_log` |
 | `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
+
+**Broadcasting belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
+
+```php
+$this->actingAs($tanpaIzin)->postJson('/broadcasting/auth', [
+    'channel_name' => 'private-backup',
+    'socket_id' => '1234.5678',
+])->assertForbidden();
+```
+
+Menguji `Event::fake()` + `assertDispatched` cuma membuktikan event terkirim, dan itu bagian yang paling tidak mungkin salah. Yang benar-benar berisiko adalah channel yang lolos ke akun yang seharusnya tidak melihat datanya — kelas bug yang sama dengan *Action Filament TIDAK ikut `canEdit()`/`canDelete()`*: pengaman di satu lapis tidak otomatis berlaku di lapis lain.
 
 `tests/Feature/ExampleTest.php` dan `tests/Unit/ExampleTest.php` masih bawaan Laravel. Yang Feature menjaga halaman `/` (view `welcome`) tetap 200 — kalau `routes/web.php` diganti, tes itu ikut diganti atau dihapus, jangan dibiarkan merah.
 
@@ -854,6 +962,9 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 13. Tambahkan disk luar (S3/rsync) ke `backup.destination.disks`. Arsip yang hanya duduk di disk yang sama dengan aplikasinya tidak menolong saat disknya yang mati.
 14. Jangan berikan `pulihkan-backup` ke siapa pun secara default. Pemegangnya bisa mengganti tabel `users` dengan versi arsip — lihat *Restore*. Berikan saat dibutuhkan, cabut setelahnya.
 15. Uji restore-nya **sekali** ke instalasi lain sebelum mempercayainya. Backup yang belum pernah dipulihkan belum terbukti backup. Ingat menjalankan `db:seed --class=RolePermissionSeeder` sesudahnya — lihat *Restore*.
+16. Setel `VITE_REVERB_HOST` ke domain publik dan `VITE_REVERB_SCHEME=https` **sebelum** langkah 3 — nilainya tertanam di bundel saat build, jadi mengubahnya sesudah `npm run build` tidak berpengaruh sampai di-build ulang. Biarkan `REVERB_HOST` sendiri menunjuk `127.0.0.1`; keduanya beda arah, lihat *Broadcasting*.
+17. Jalankan `reverb:start` di bawah supervisor (systemd/supervisord), bukan dari SSH. Ia proses yang harus terus hidup, sama seperti queue worker.
+18. Proxy `wss://` di Nginx ke port 8080 dengan header `Upgrade`/`Connection`. Tanpa itu browser di `https://` menolak menyambung, dan penolakannya tidak meninggalkan jejak di log server.
 
 ## Verifikasi cepat
 
@@ -905,3 +1016,28 @@ akses-panel: true
 ```
 
 Kalau `model-role` menunjuk `Spatie\Permission\Models\Role`, perubahan role tidak masuk audit log — cek `config/permission.php`.
+
+### Broadcasting
+
+Jalankan `php artisan reverb:start` di terminal lain, lalu tembak handshake WebSocket sungguhan — `curl` biasa ke URL itu memang mengembalikan 500 karena tidak meminta upgrade protokol, dan itu **bukan** tanda servernya rusak:
+
+```bash
+php artisan about --only=drivers | grep -i broadcast
+source .env && curl -si --max-time 4 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==" -H "Sec-WebSocket-Version: 13" \
+  "http://localhost:${REVERB_PORT}/app/${REVERB_APP_KEY}?protocol=7&client=js&version=8.4.0" | head -6
+```
+
+Output yang diharapkan:
+
+```
+Broadcasting .. reverb
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: HSmrc0sMlYUkAGmm5OPpG2HaGWk=
+X-Powered-By: Laravel Reverb
+```
+
+Diikuti frame `pusher:connection_established` berisi `socket_id`. Kalau berhenti di `101` tanpa frame itu, `REVERB_APP_KEY` tidak cocok dengan yang dikenal server.
