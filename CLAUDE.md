@@ -15,10 +15,11 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Role & permission | spatie/laravel-permission 8 |
 | Backup | spatie/laravel-backup 10 |
 | WebSocket | laravel/reverb 1 + laravel-echo & pusher-js |
+| Gambar | intervention/image 4.2 lewat intervention/image-laravel 4.1 |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta broadcasting WebSocket yang terpasang tapi belum menyiarkan satu event pun.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta dua fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, dan pengolah gambar yang belum menyentuh satu berkas.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
@@ -742,6 +743,106 @@ Setelah `echo.js` jadi entry, **lepaskan `import './echo'` dari `app.js`** kalau
 
 Selama belum ada event yang di-broadcast, ini tidak berdampak. Begitu ada, event `ShouldBroadcast` yang diterbitkan **saat server Reverb mati** akan gagal terkirim — dan karena `ShouldBroadcast` lewat queue, kegagalannya mendarat di `failed_jobs`, bukan di layar. Untuk mematikan sementara tanpa menyentuh kode: `BROADCAST_CONNECTION=log`.
 
+## Gambar (intervention/image)
+
+Pengolahan gambar sisi server: resize, crop, watermark, konversi format. Belum dipakai modul mana pun — terpasang sebagai fondasi, sama seperti Reverb.
+
+Yang dipasang adalah `intervention/image-laravel` (bridge), bukan `intervention/image` telanjang. Bridge menarik core-nya sebagai dependensi lalu menambahkan tiga hal: facade `Image`, config `config/intervention-image.php`, dan macro `response()->image($img)`. Memakai core langsung tetap sah — bridge cuma menyediakan jalan pintas, bukan pembungkus yang menyembunyikan API.
+
+| Paket | Versi |
+|---|---|
+| `intervention/image` | 4.2 |
+| `intervention/image-laravel` | 4.1 |
+
+### API 4.2 berbeda dari hampir semua contoh yang beredar
+
+Jebakan pertama dan yang paling banyak membuang waktu. Versi 4.2 mengganti nama method inti, **tanpa meninggalkan alias**, sementara situs dokumentasi dan tiap tutorial yang beredar masih memakai nama lama. Gejalanya `Call to undefined method`, bukan deprecation warning.
+
+| Contoh yang beredar | Yang benar di 4.2 |
+|---|---|
+| `Image::read($path)` | `Image::decodePath($path)` |
+| `Image::read($binary)` | `Image::decodeBinary($binary)` — atau `decode()` yang menebak sendiri |
+| `Image::create(400, 300)` | `Image::createImage(400, 300)` |
+| `$img->toJpeg(80)` | `$img->encodeUsingFormat(Format::JPEG, quality: 80)` |
+| `$img->toWebp(80)` | `$img->encodeUsingFormat(Format::WEBP, quality: 80)` |
+| `ImageManager::gd()` / `::imagick()` | `new ImageManager(new Gd\Driver)` atau `ImageManager::usingDriver(...)` |
+
+`decode()` menerima path, binary, base64, data URI, stream, atau `SplFileInfo` dan memilih decoder sendiri. Varian eksplisit (`decodePath`, `decodeBinary`, …) lebih baik dipakai kalau sumbernya sudah pasti — input yang tidak sesuai dugaan gagal lebih cepat dan pesannya lebih jelas.
+
+Untuk kontrol penuh, lewatkan objek encoder:
+
+```php
+use Intervention\Image\Encoders\JpegEncoder;
+
+$img->encode(new JpegEncoder(quality: 60, progressive: true, strip: true));
+```
+
+`$img->save($path)` masih ada dan menyimpulkan format dari ekstensi berkas, dengan fallback ke media type sumber kalau ekstensinya tidak dikenali — jadi `simpan.dat` tidak gagal, ia diam-diam tersimpan dalam format aslinya.
+
+**`save()` tanpa argumen menimpa berkas sumbernya.** Ia jatuh ke `origin()->filePath()`, yaitu path yang tadi dibaca `decodePath()`. Untuk thumbnail, itu berarti foto asli tergantikan versi kecilnya dan tidak ada jalan pulang. Selalu berikan path tujuan secara eksplisit kecuali menimpa memang yang dimaksud.
+
+### Driver — nilainya nama class, bukan `gd`
+
+`IMAGE_DRIVER` di `.env`. Nilainya **nama class penuh**; `IMAGE_DRIVER=gd` melempar `Argument $driver must be existing class name`.
+
+```
+IMAGE_DRIVER=Intervention\Image\Drivers\Gd\Driver
+```
+
+Backslash-nya tunggal dan **jangan dikutip** — nilai tanpa kutip di dotenv tidak diproses escape-nya, sedangkan di dalam kutip ganda `\I` dan `\D` berubah arti.
+
+GD dipilih sebagai default bukan karena lebih baik, tapi karena lebih pasti ada. Imagick lebih kaya format tapi jauh lebih sering absen di shared hosting.
+
+**Komentar bawaan di `config/intervention-image.php` menyesatkan.** Ia mendaftar tiga "Included options", padahal paketnya cuma membawa dua: `src/Drivers/` isinya hanya `Gd/` dan `Imagick/`. `Vips\Driver` ada di paket terpisah `intervention/image-driver-vips` yang belum terpasang di sini, jadi mengarahkan `IMAGE_DRIVER` ke sana melempar `Argument $driver must be existing class name` — pesan yang terbaca seperti salah ketik, bukan seperti paket yang kurang.
+
+Dukungan format di mesin ini (dua-duanya terpasang):
+
+| Format | GD | Imagick 7.1.1 |
+|---|---|---|
+| JPEG, PNG, GIF, WebP | ya | ya |
+| TIFF, PDF, SVG | tidak | ya |
+| AVIF | tidak | tidak |
+| **HEIC** | **tidak** | **tidak** |
+
+**HEIC itu masalah nyata, bukan catatan kaki.** iPhone memotret HEIC secara default, jadi unggahan foto siswa dari iPhone akan gagal didekode di kedua driver. Yang tersedia cuma dua jalan: tolak di validasi dengan pesan yang jelas (bukan error 500), atau pasang `libheif` di server dan bangun ulang Imagick. Jangan biarkan kegagalannya muncul sebagai exception saat simpan.
+
+### `strip` sengaja `true`, beda dari bawaan paket
+
+`config/intervention-image.php` di repo ini menyetel `'strip' => true`; bawaan paket `false`. Ini keputusan privasi, bukan preferensi.
+
+Foto dari HP membawa EXIF berisi **koordinat GPS**, merek/model perangkat, dan waktu pengambilan. Dalam konteks sekolah itu berarti lokasi rumah anak ikut tersimpan di berkas yang disajikan lewat URL publik.
+
+Yang membuat ini halus: **encoder GD tidak pernah membaca opsi `strip`.** GD memang tidak menulis metadata apa pun, jadi dengan driver bawaan nilainya tidak berpengaruh sama sekali. Encoder Imagick membacanya. Artinya dengan `false`, mengganti `IMAGE_DRIVER` ke Imagick — demi TIFF atau PDF, alasan yang sama sekali tidak berhubungan — diam-diam mulai menyimpan koordinat GPS ke tiap foto. Tidak ada error, tidak ada peringatan, dan tidak ada tes yang gagal.
+
+`true` membuat perilakunya sama di kedua driver, jadi pilihan driver berhenti menjadi keputusan privasi. Kalau suatu saat memang butuh EXIF tersimpan (misalnya modul dokumentasi foto yang perlu tanggal pengambilan), matikan **per pemanggilan** lewat `new JpegEncoder(strip: false)`, jangan balikkan defaultnya.
+
+`autoOrientation` tetap `true` dan tidak bentrok: rotasi dibaca dari EXIF saat **decode**, pembuangan metadata terjadi saat **encode**. Foto tetap tegak, koordinatnya tetap hilang.
+
+### `composer install` tidak menjamin drivernya ada
+
+`intervention/image` hanya mensyaratkan `php`, `ext-mbstring`, dan `intervention/gif` — **`ext-gd` dan `ext-imagick` tidak ada di `require`**. Konsekuensinya `composer install` sukses sempurna di server yang tidak punya keduanya, dan kegagalannya baru muncul saat gambar pertama diproses, di produksi, kepada pengguna sungguhan.
+
+```bash
+sudo apt install php8.4-gd    # atau php8.4-imagick
+php -m | grep -E '^(gd|imagick|exif)$'
+```
+
+`ext-exif` disarankan paketnya sendiri dan dibutuhkan `autoOrientation` untuk membaca orientasi. Tanpa itu foto potret dari HP tersimpan miring.
+
+### Hubungannya dengan Filament
+
+`FileUpload` di Filament punya `->imageEditor()`, dan itu **bukan pengganti** paket ini: editor Filament berjalan di **browser** (crop/rotate sebelum unggah, bisa dilewati siapa pun yang mengunggah lewat cara lain), sedangkan Intervention berjalan di **server** setelah berkas mendarat. Thumbnail, normalisasi ukuran, dan pembuangan EXIF hanya bisa dijamin di sisi server.
+
+Pola yang wajar nanti: `->imageEditor()` untuk kenyamanan, ditambah pemrosesan server-side di model event atau job untuk yang benar-benar dijamin.
+
+Kalau perlu menyajikan gambar hasil olahan langsung sebagai response, bridge menyediakan macro:
+
+```php
+return response()->image($img, Format::WEBP, quality: 80);
+```
+
+Untuk gambar yang mahal diolah, dahulukan menyimpan hasilnya ke disk ketimbang mengolah ulang tiap request.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -761,7 +862,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupArchivePasswordTest` | Password panel menang atas `.env`, fallback ke `.env`, sampai ke kedua jalur backup, terenkripsi di DB, tidak bocor ke `activity_log` |
 | `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
 
-**Broadcasting belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
+**Broadcasting dan pengolahan gambar belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan dan belum ada berkas yang diolah — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
 
 ```php
 $this->actingAs($tanpaIzin)->postJson('/broadcasting/auth', [
@@ -771,6 +872,8 @@ $this->actingAs($tanpaIzin)->postJson('/broadcasting/auth', [
 ```
 
 Menguji `Event::fake()` + `assertDispatched` cuma membuktikan event terkirim, dan itu bagian yang paling tidak mungkin salah. Yang benar-benar berisiko adalah channel yang lolos ke akun yang seharusnya tidak melihat datanya — kelas bug yang sama dengan *Action Filament TIDAK ikut `canEdit()`/`canDelete()`*: pengaman di satu lapis tidak otomatis berlaku di lapis lain.
+
+Untuk gambar, prioritasnya sama-sama bukan bagian yang gampang: ukuran hasil resize akan ketahuan salah pada pandangan pertama, sedangkan **EXIF yang lolos ke berkas tersimpan tidak terlihat sama sekali**. Uji berkas hasilnya, bukan konfigurasinya — `config('intervention-image.options.strip')` bisa `true` sementara ada satu pemanggilan yang melewatkan `strip: false`, dan hanya berkas nyatanya yang membuktikan. Tesnya jalankan dengan driver Imagick; dengan GD tesnya selalu hijau karena GD tidak pernah menulis metadata, jadi ia tidak membuktikan apa pun.
 
 `tests/Feature/ExampleTest.php` dan `tests/Unit/ExampleTest.php` masih bawaan Laravel. Yang Feature menjaga halaman `/` (view `welcome`) tetap 200 — kalau `routes/web.php` diganti, tes itu ikut diganti atau dihapus, jangan dibiarkan merah.
 
@@ -965,6 +1068,7 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 16. Setel `VITE_REVERB_HOST` ke domain publik dan `VITE_REVERB_SCHEME=https` **sebelum** langkah 3 — nilainya tertanam di bundel saat build, jadi mengubahnya sesudah `npm run build` tidak berpengaruh sampai di-build ulang. Biarkan `REVERB_HOST` sendiri menunjuk `127.0.0.1`; keduanya beda arah, lihat *Broadcasting*.
 17. Jalankan `reverb:start` di bawah supervisor (systemd/supervisord), bukan dari SSH. Ia proses yang harus terus hidup, sama seperti queue worker.
 18. Proxy `wss://` di Nginx ke port 8080 dengan header `Upgrade`/`Connection`. Tanpa itu browser di `https://` menolak menyambung, dan penolakannya tidak meninggalkan jejak di log server.
+19. `sudo apt install php8.4-gd php8.4-exif` lalu pastikan `php -m` menampilkannya. `intervention/image` **tidak** mencantumkan `ext-gd` di `require`, jadi `composer install` tetap sukses tanpa itu dan kegagalannya baru muncul saat gambar pertama diproses. `ext-exif` dibutuhkan `autoOrientation`, kalau tidak foto potret tersimpan miring.
 
 ## Verifikasi cepat
 
@@ -1041,3 +1145,33 @@ X-Powered-By: Laravel Reverb
 ```
 
 Diikuti frame `pusher:connection_established` berisi `socket_id`. Kalau berhenti di `101` tanpa frame itu, `REVERB_APP_KEY` tidak cocok dengan yang dikenal server.
+
+### Gambar
+
+```bash
+php -m | grep -E '^(gd|imagick|exif)$'
+php artisan config:clear
+php artisan tinker --execute="
+use Intervention\Image\Laravel\Facades\Image;
+use Intervention\Image\Format;
+echo 'driver: '.config('intervention-image.driver').PHP_EOL;
+echo 'strip: '.var_export(config('intervention-image.options.strip'), true).PHP_EOL;
+\\\$t = Image::createImage(400, 300)->fill('336699')->scale(width: 120);
+echo 'scaled: '.\\\$t->width().'x'.\\\$t->height().PHP_EOL;
+echo 'webp: '.strlen((string) \\\$t->encodeUsingFormat(Format::WEBP, quality: 80)).' bytes'.PHP_EOL;
+"
+```
+
+Output yang diharapkan:
+
+```
+exif
+gd
+imagick
+driver: Intervention\Image\Drivers\Gd\Driver
+strip: true
+scaled: 120x90
+webp: 98 bytes
+```
+
+`imagick` opsional — yang wajib cuma `gd` (atau Imagick kalau `IMAGE_DRIVER` diarahkan ke sana) dan `exif`. `strip: false` berarti `config/intervention-image.php` kembali ke bawaan paket — baca alasannya di *`strip` sengaja `true`* sebelum membiarkannya. `Call to undefined method` pada `createImage` atau `encodeUsingFormat` berarti versinya turun di bawah 4.2, lihat tabel rename API.
