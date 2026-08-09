@@ -6,20 +6,22 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 
 | Komponen | Versi |
 |---|---|
-| PHP | 8.4 |
+| PHP | 8.4 lokal — `composer.json` minimum `^8.3` |
 | Laravel | 13 |
 | Filament (admin panel) | 5 |
 | Database | SQLite — `database/database.sqlite` |
 | Frontend | Vite |
 | Audit log | spatie/laravel-activitylog 5 |
 | Role & permission | spatie/laravel-permission 8 |
+| Backup | spatie/laravel-backup 10 |
 | Debug | barryvdh/laravel-debugbar (dev only) |
+| Output tes | laravel/pao (dev only) |
 
 Belum ada modul aplikasi (siswa, guru, kelas, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, plus UI kelola pengguna & role.
 
-Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, dan lima tabel role/permission.
+Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, dan `backup_schedules`.
 
-Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/permissions`, `/admin/activities`.
+Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/permissions`, `/admin/activities`, `/admin/backups`.
 
 ## Perintah
 
@@ -28,6 +30,8 @@ composer run dev      # serve + queue:listen + pail (log) + vite, sekaligus
 composer run test     # config:clear lalu artisan test
 composer run setup    # install deps, generate key, migrate, build asset
 ./vendor/bin/pint     # format kode PHP
+php artisan backup:run    # buat arsip backup sekarang
+php artisan backup:list   # daftar arsip + status sehat/tidak
 ```
 
 ## Filament (admin panel)
@@ -97,7 +101,7 @@ Jangan tulis string mentah. Sumber kebenarannya:
 | File | Isi |
 |---|---|
 | `app/Enums/Role.php` | `SuperAdmin = 'super-admin'` |
-| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole` |
+| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole`, `KelolaBackup` |
 
 ```php
 $user->can(Permission::LihatLogAktivitas->value);
@@ -127,6 +131,8 @@ Grup navigasi **Manajemen Akses**:
 | Pengguna | `/admin/users` | `kelola-pengguna` | CRUD + centang role |
 | Role | `/admin/roles` | `kelola-role` | CRUD + centang izin |
 | Izin | `/admin/permissions` | `kelola-role` | **read-only** |
+
+Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `lihat-log-aktivitas`, read-only) dan **Backup** (`/admin/backups`, izin `kelola-backup`) — lihat bagian *Audit log* dan *Backup*.
 
 Pengaman yang sengaja dipasang — jangan dilonggarkan tanpa alasan:
 
@@ -203,6 +209,8 @@ Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **L
 | `auth` | `App\Listeners\LogAuthenticationActivity` | `login`, `logout`, `failed`, `lockout` |
 | `otorisasi` | `App\Listeners\LogAuthorizationChanges` | `role-diberikan`, `role-dicabut`, `izin-diberikan`, `izin-dicabut` |
 | `otorisasi` | trait `LogsActivity` di `App\Models\Role` dan `App\Models\Permission` | `created`, `updated`, `deleted` |
+| `backup` | aksi di `App\Filament\Pages\Backups` | `backup-dijalankan`, `backup-diunduh`, `backup-dihapus` |
+| `backup` | trait `LogsActivity` di `App\Models\BackupSchedule` | `updated` |
 
 Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, pemberian dan pencabutan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
 
@@ -264,15 +272,201 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 
 ### Pembersihan
 
-`activitylog:clean` terjadwal harian jam 02:00 di `routes/console.php`. Batas umurnya `clean_after_days` (default 365) di `config/activitylog.php`. Scheduler perlu cron aktif di server (`php artisan schedule:run` tiap menit).
+`activitylog:clean --force` terjadwal harian jam 02:00 di `routes/console.php`, dengan `onOneServer()` supaya tidak jalan dobel kalau nanti ada lebih dari satu server. Batas umurnya `clean_after_days` (default 365) di `config/activitylog.php`. Scheduler perlu cron aktif di server (`php artisan schedule:run` tiap menit).
+
+`--force` khusus untuk produksi. `CleanActivitylogCommand` memakai `ConfirmableTrait`, yang **hanya** meminta konfirmasi kalau `APP_ENV=production`. Di cron tidak ada yang menjawab, jadi tanpa `--force` perintahnya berhenti diam-diam (`return 1`, tanpa error mencolok) dan `activity_log` tumbuh terus. Di lokal flag ini tidak berpengaruh — jangan dilepas hanya karena "di dev jalan-jalan saja".
 
 ### Mematikan sementara
 
 `ACTIVITYLOG_ENABLED=false` di `.env`. Berguna saat impor data massal supaya tidak membanjiri tabel.
 
+## Backup (spatie/laravel-backup)
+
+### UI di panel — `/admin/backups`
+
+Menu **Backup** (`$navigationSort` 80, tanpa grup, bertetangga dengan Log Aktivitas). Izinnya `kelola-backup`, **terpisah dari `akses-panel-admin`** — halaman ini memperlihatkan kapan database terakhir ditangkap dan berjarak satu klik dari menyerahkan seluruh isinya, jadi tidak ikut terbawa hanya karena seseorang boleh masuk panel.
+
+Isinya: ringkasan status di subheading (jumlah arsip, total ukuran, umur arsip terbaru), tabel arsip, dan tiga aksi.
+
+| Aksi | Perilaku |
+|---|---|
+| **Ubah Jadwal** | Form frekuensi/hari/jam, disimpan ke `backup_schedules` |
+| **Backup Sekarang** | Dispatch `App\Jobs\RunBackup` ke queue, bukan dijalankan di request |
+| **Unduh** | Streaming download, dicatat ke `activity_log` |
+| **Hapus** | Konfirmasi wajib, arsip terbaru dikunci, dicatat ke `activity_log` |
+
+**Bukan Resource, melainkan `Filament\Pages\Page`.** Backup itu berkas di disk, bukan record Eloquent — tidak ada model, tidak ada id, tidak ada yang bisa di-query. Tabelnya diisi lewat `->records()`, bukan `->query()`, sehingga tiap baris sampai ke closure sebagai **array biasa, bukan Model**. Semua closure di halaman itu karena itu bertipe `array $record`.
+
+#### Kunci baris adalah input pengguna
+
+Konsekuensi paling penting dari tabel non-Eloquent, dan alasan `resolveBackup()` ada.
+
+Kunci tiap baris adalah path arsip, dan Filament memulangkan kunci itu lewat browser setiap kali aksi dipanggil — artinya ia **kembali sebagai input pengguna**. Memakainya langsung sebagai path akan membuka path traversal: `../../../.env` akan mengunduh kredensial yang justru dijaga mati-matian supaya tidak ikut terarsip.
+
+Karena itu kunci **tidak pernah dipakai sebagai path**. Ia dicocokkan dengan daftar path yang benar-benar dilaporkan disk, dan hanya yang cocok yang dieksekusi.
+
+Ada dua lapis, keduanya dikunci tes:
+
+1. Filament lebih dulu mencocokkan kunci dengan record yang dirender, dan melempar `ActionNotResolvableException` kalau tidak ketemu.
+2. `resolveBackup()` mencocokkan lagi dengan isi disk, lalu `abort(404)`.
+
+`test_a_forged_record_key_cannot_reach_a_file_outside_the_backup_folder` menembakkan kunci palsu ke tombol unduh **dan** hapus, lalu memastikan berkas di luar folder backup tidak tersentuh. **Kalau menambah aksi baru di halaman ini, lewatkan recordnya melalui `resolveBackup()` — jangan pernah menyentuh `$record` sebagai path.**
+
+#### Arsip terbaru tidak bisa dihapus
+
+Dijaga dua kali: `->disabled()` di tombolnya (diperiksa server-side, lihat bagian *Action Filament TIDAK ikut canEdit/canDelete*) **dan** dicek ulang di dalam `delete()` terhadap keadaan terkini — status "terbaru" bisa berubah antara halaman dirender dan tombol diklik.
+
+#### Jadwal bisa diubah user — dan itu mengubah dua hal lain
+
+`backup:run` **tidak** lagi hardcode di `routes/console.php`. Jadwalnya dibaca dari tabel `backup_schedules` (satu baris) lewat `App\Models\BackupSchedule::current()`. Default **mingguan, Minggu 01:30**.
+
+Barisnya dibuat saat pertama dibaca, bukan lewat seeder, supaya instalasi baru dan yang sudah jalan menempuh jalur sama. Pembuatan default itu dibungkus `withoutEvents()` — nilai defaultnya bukan pilihan siapa pun, dan kalau dicatat normal ia akan tampil sebagai `created` atas nama orang yang kebetulan pertama membuka halaman. Perubahan sungguhan lewat form tetap tercatat sebagai `updated`.
+
+`backup:clean` (01:00) dan `backup:monitor` (07:00) **tetap hardcode**. Keduanya perawatan; membiarkannya ikut disetel membuka skenario cleanup tiap jam sementara backup sebulan sekali.
+
+**Dua konsekuensi yang tidak terlihat dari form:**
+
+**1. `routes/console.php` sekarang membaca database.** File itu dieksekusi pada **setiap** invokasi artisan, termasuk `migrate` di database yang belum punya tabelnya. Karena itu pembacaannya dibungkus `try/catch (QueryException)` — tabel hilang berarti "jadwal tidak didaftarkan", bukan crash. Tanpa itu, instalasi baru tidak bisa boot cukup jauh untuk memperbaiki dirinya sendiri: migrasi yang membuat tabel tidak akan pernah bisa jalan.
+
+**2. Ambang health check ikut jadwal.** `MaximumAgeInDays` bawaan paket default 1 hari — benar hanya selama backup harian. Begitu jadwalnya mingguan, `backup:monitor` melapor "unhealthy" **tiap hari** mulai hari kedua. Alarm palsu harian persis yang membuat orang berhenti membaca notifikasi backup.
+
+Diganti `App\Support\Backup\MaximumAgeMatchingSchedule`, yang menurunkan ambangnya dari jadwal:
+
+| Frekuensi | Ambang |
+|---|---|
+| Harian | 2 hari |
+| Mingguan | 8 hari |
+| Bulanan | 32 hari |
+| Dimatikan | praktis tak terbatas |
+
+Satu interval plus satu interval kelonggaran: satu kali terlewat dimaafkan, dua kali berturut-turut tidak.
+
+Aman terhadap `php artisan config:cache` — yang tersimpan di cache cuma nama class-nya; ambangnya dihitung saat `backup:monitor` jalan.
+
+**Kalau menambah frekuensi baru di `App\Enums\BackupFrequency`, tambahkan juga cabangnya di `MaximumAgeMatchingSchedule`.** `match` di sana tidak punya `default`, jadi case baru akan melempar `UnhandledMatchError` — sengaja, supaya ketahuan saat itu juga ketimbang diam-diam memakai ambang yang salah.
+
+#### Tombol Backup Sekarang lewat queue
+
+`RunBackup` di-dispatch, tidak dijalankan langsung. Dump + zip memakan waktu yang tumbuh seiring isi database, dan timeout PHP di tengah proses meninggalkan berkas separuh jadi. Job-nya `tries = 1` dengan sengaja: backup gagal hampir selalu masalah konfigurasi (biner `sqlite3` hilang, disk tidak bisa ditulis), dan mengulang cuma mengulang kegagalan yang sama.
+
+**Butuh queue worker jalan.** `composer run dev` sudah membawanya. Kalau worker mati, tombolnya tetap memberi notifikasi "sedang diproses" tapi tidak ada arsip yang pernah muncul — jalankan `php artisan queue:work` atau pakai `backup:run` di CLI.
+
+### Variabel environment
+
+| Key | Isi |
+|---|---|
+| `BACKUP_NAME` | Nama folder di disk tujuan **dan** nama yang dipantau. Ubah = mulai menulis ke folder baru |
+| `BACKUP_ARCHIVE_PASSWORD` | Password AES-256. Hilang = seluruh arsip tidak bisa dibuka |
+| `BACKUP_NOTIFICATION_EMAIL` | Tujuan notifikasi kegagalan |
+| `DB_DUMP_BINARY_PATH` | Direktori biner `sqlite3`, diakhiri garis miring. Kosong = ikut PATH |
+
+### Config
+
+Config di `config/backup.php`. Arsip mendarat di disk `backups` (`storage/app/backups/school-management/`), sudah ikut ter-gitignore lewat `storage/app/.gitignore`.
+
+```bash
+php artisan backup:run       # buat arsip sekarang
+php artisan backup:list      # daftar arsip + status sehat/tidak
+php artisan backup:clean     # hapus arsip lama sesuai aturan retensi
+php artisan backup:monitor   # cek umur & ukuran, kirim notifikasi kalau bermasalah
+```
+
+Terjadwal di `routes/console.php`: `backup:clean` 01:00 dan `backup:monitor` 07:00 (keduanya tetap, harian), sementara `backup:run` mengikuti jadwal yang disetel user — default mingguan. Semua `onOneServer()`, `backup:run` juga `withoutOverlapping()`.
+
+Urutan clean vs run tidak diikat: `DefaultStrategy` tidak pernah menghapus arsip terbaru, jadi keduanya aman dalam urutan apa pun. `backup:clean` dijauhkan dari `activitylog:clean` (02:00) supaya tidak menyentuh `database.sqlite` bersamaan.
+
+### Yang di-backup — dan yang sengaja tidak
+
+| Masuk arsip | Tidak masuk |
+|---|---|
+| Dump database (`db-dumps/…sql.gz`) | `vendor/`, `node_modules/` |
+| `storage/app/public` (berkas unggahan) | Kode aplikasi — sudah di git |
+| | Asset panel — hasil `filament:assets` |
+| | `public/build` — hasil `npm run build` |
+| | **`.env`** |
+
+Prinsipnya: hanya yang **tidak bisa dibuat ulang**. Sisanya lahir dari git + `composer install` + build.
+
+**`.env` sengaja ada di `exclude`.** Isinya `APP_KEY` beserta semua kredensial, sementara arsip backup justru file yang paling mungkin disalin keluar server. Baris itu juga jaring pengaman kalau suatu saat `include` diperluas ke `base_path()` — jangan dihapus.
+
+Konsekuensi yang harus disadari: **arsip ini tidak cukup untuk memulihkan aplikasi sendirian.** Restore = `git clone` + `composer install` + `.env` (dari brankas terpisah) + bongkar arsip + import dump.
+
+### Enkripsi
+
+Arsip dienkripsi AES-256 dengan `BACKUP_ARCHIVE_PASSWORD` dari `.env`.
+
+**Password hilang = seluruh arsip hilang selamanya.** Tidak ada jalur pemulihan. Simpan salinannya di luar server — password manager, bukan hanya `.env` yang ikut mati bersama mesinnya. Mengganti password tidak membuka arsip lama; arsip tetap terkunci dengan password saat ia dibuat.
+
+**`unzip` biasa tidak bisa membukanya.** Info-ZIP mentok di format v4.6, sedangkan AES butuh v5.1 — errornya berbunyi `need PK compat. v5.1 (can do v4.6)` dan itu **bukan** tanda password salah. Pakai `7z`:
+
+```bash
+sudo apt install p7zip-full
+7z x -p"$BACKUP_ARCHIVE_PASSWORD" storage/app/backups/school-management/2026-08-09-01-30-00.zip
+```
+
+Kalau `7z` tidak tersedia, PHP sendiri bisa (libzip sudah mendukung AES):
+
+```bash
+php -r '$z = new ZipArchive; $z->open($argv[1]); $z->setPassword($argv[2]); $z->extractTo($argv[3]);' -- ARSIP.zip PASSWORD ./tujuan
+```
+
+### Restore database
+
+```bash
+gunzip -c db-dumps/sqlite-sqlite-database.sql.gz | sqlite3 database/database.sqlite
+```
+
+Dump-nya berisi `CREATE TABLE IF NOT EXISTS`, jadi restore ke database yang sudah berisi tabel **tidak** menimpa apa pun — malah menghasilkan campuran data lama dan baru. Kosongkan dulu file databasenya kalau ingin benar-benar mengembalikan keadaan.
+
+### Butuh biner `sqlite3`, bukan cuma PHP
+
+Jebakan yang paling mungkin menggigit di produksi. Dumper SQLite milik `spatie/db-dumper` **tidak menyalin file database** — ia menjalankan shell:
+
+```
+echo 'BEGIN IMMEDIATE;\n.dump' | sqlite3 --bail database/database.sqlite
+```
+
+`BEGIN IMMEDIATE` itulah alasan dump lebih aman daripada menyalin filenya: ia mengambil kunci tulis, jadi tidak mungkin menangkap halaman yang setengah tertulis.
+
+Konsekuensinya: **PHP boleh sempurna, `backup:run` tetap gagal kalau CLI `sqlite3` tidak terpasang.** Ekstensi PDO sqlite milik PHP tidak menggantikannya.
+
+```bash
+sudo apt install sqlite3
+```
+
+Kalau `backup:run` manual berhasil tapi lewat scheduler gagal, hampir pasti PATH — PATH milik cron jauh lebih sempit daripada shell interaktif. Isi `DB_DUMP_BINARY_PATH` di `.env` dengan **direktorinya**, diakhiri garis miring:
+
+```
+DB_DUMP_BINARY_PATH=/usr/bin/
+```
+
+Dibaca dari `config/database.php` → `connections.sqlite.dump.dump_binary_path`.
+
+### Notifikasi
+
+Hanya kabar buruk yang dikirim: backup gagal, cleanup gagal, backup tidak sehat. Notifikasi sukses sengaja dimatikan (`=> []`) — kabar sukses harian membuat orang berhenti membaca notifikasi backup, dan yang ikut terlewat adalah notifikasi gagalnya.
+
+Tujuannya `BACKUP_NOTIFICATION_EMAIL`. Selama `MAIL_MAILER=log`, "email" itu hanya mendarat di `storage/logs/laravel.log` — **setel SMTP sebelum produksi**, kalau tidak kegagalan backup tidak sampai ke siapa pun.
+
+### Ini belum backup sungguhan
+
+Disk `backups` masih satu mesin dan satu disk dengan aplikasinya. Aman dari "kehapus tidak sengaja", **tidak** aman dari disk mati, server hilang, atau ransomware. Untuk produksi tambahkan disk kedua di luar mesin:
+
+```php
+'disks' => ['backups', 's3'],
+```
+
+Kredensial S3 sudah ada tempatnya di `config/filesystems.php`, tinggal isi `AWS_*` di `.env`.
+
+### Kalau nanti pindah dari SQLite
+
+Ganti `DB_CONNECTION` saja tidak cukup — `backup.source.databases` mengikuti env itu, tapi binernya berubah (`mysqldump`/`pg_dump`) dan harus ikut terpasang di server.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
+
+Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan tampilan PHPUnit biasa. Itu ulah `laravel/pao` — lihat bagian *Tooling dev*.
 
 | File | Yang dijaga |
 |---|---|
@@ -281,6 +475,11 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 | `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
 | `AccessManagementUiTest` | Form pengguna & role, pengaman anti-terkunci, perubahan otorisasi masuk log |
 | `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false` |
+| `BackupConfigurationTest` | Tujuan backup, `.env` tidak ikut terarsip, nama pantauan cocok, jadwal terdaftar |
+| `BackupPageTest` | Izin halaman backup, tombol unduh/hapus, arsip terbaru terlindungi, kunci baris palsu ditolak |
+| `BackupScheduleTest` | Default mingguan, cron tiap frekuensi, scheduler pakai jadwal user, tabel hilang tidak bikin crash, ambang monitor ikut frekuensi |
+
+`tests/Feature/ExampleTest.php` dan `tests/Unit/ExampleTest.php` masih bawaan Laravel. Yang Feature menjaga halaman `/` (view `welcome`) tetap 200 — kalau `routes/web.php` diganti, tes itu ikut diganti atau dihapus, jangan dibiarkan merah.
 
 Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus karena terlihat sepele:
 
@@ -368,6 +567,34 @@ Terakhir: `./vendor/bin/pint` lalu `composer run test`.
 - **Jangan pernah aktif di produksi.** Debugbar membocorkan query SQL, isi session, dan variabel env.
 - Config bisa di-publish kalau perlu tuning collector: `php artisan vendor:publish --provider="Barryvdh\Debugbar\ServiceProvider"`.
 
+### laravel/pao — output tes berbeda untuk agent
+
+`laravel/pao` juga dev dependency, auto-discovery. Fungsinya satu: **mengganti bentuk output phpunit ketika yang menjalankan adalah AI agent**, bukan manusia.
+
+| Yang menjalankan | Output `composer run test` |
+|---|---|
+| Manusia di terminal | Output PHPUnit biasa — titik-titik, warna, ringkasan |
+| Claude Code / agent lain | Satu baris JSON: `{"tool":"phpunit","result":"passed","tests":…,"passed":…,"duration_ms":…}` |
+
+Deteksinya lewat `Laravel\AgentDetector` (variabel environment yang dipasang agent), dipanggil dari `src/Autoload.php` yang di-autoload lewat `files` — jadi aktif untuk **setiap** proses PHP yang memuat `vendor/autoload.php`, bukan cuma lewat artisan.
+
+Yang memicu mode JSON adalah **nama binernya**, bukan cara memanggil: `phpunit`, `pest`, `paratest`, `phpstan`, `rector`. `./vendor/bin/phpunit` langsung pun tetap kena — memanggil biner mentah **bukan** jalan keluar.
+
+Saklarnya environment variable:
+
+```bash
+PAO_DISABLE=1 ./vendor/bin/phpunit    # paksa output PHPUnit biasa (buat baca error panjang)
+PAO_FORCE=1 php artisan test          # paksa output JSON walau bukan agent
+```
+
+Konsekuensi yang perlu diingat:
+
+- **Perintahnya sama, tampilannya beda.** Kalau user bilang "output tes saya tidak seperti itu", bukan berarti salah satu salah — memang dua bentuk untuk perintah yang sama.
+- **Jangan menulis skrip yang mem-parsing output tes** dengan asumsi salah satu bentuk. Bentuknya berubah tergantung siapa yang memanggil.
+- Pao hanya mengubah tampilan. Exit code, tes yang jalan, dan hasilnya identik — aman diabaikan saat menilai hijau/merah.
+- Ringkasan JSON memuat `failures` beserta pesannya, tapi sudah dipangkas. Kalau butuh stack trace utuh, ulangi dengan `PAO_DISABLE=1`.
+- **Pint bukan bagian dari pao.** `./vendor/bin/pint` juga mengeluarkan JSON (`{"tool":"pint",...}`) untuk agent, tapi itu bawaan Pint sendiri — `PAO_DISABLE=1` tidak mengubahnya.
+
 ## Lokalisasi (Indonesia)
 
 Aplikasi ini disetel untuk wilayah Indonesia. Jangan kembalikan ke default Laravel (UTC / `en`).
@@ -429,7 +656,12 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 5. Pastikan `APP_DEBUG=false` dan `DEBUGBAR_ENABLED` tidak `true`.
 6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini tidak membuat user, jadi aman di produksi.
 7. **Jangan jalankan `db:seed` polos** — itu ikut menjalankan `AdminUserSeeder` yang memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu `assignRole('super-admin')` manual. Tanpa role, akun barunya kena 403.
-8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` tidak pernah jalan dan `activity_log` tumbuh tanpa batas.
+8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` dan seluruh perintah backup tidak pernah jalan — `activity_log` tumbuh tanpa batas dan tidak ada arsip yang pernah dibuat.
+9. `sudo apt install sqlite3` — `backup:run` butuh binernya, ekstensi PHP saja tidak cukup.
+10. Isi `BACKUP_ARCHIVE_PASSWORD` di `.env` **dan simpan salinannya di luar server**. Kosong = arsip tidak terenkripsi, tanpa peringatan apa pun.
+11. Setel SMTP sungguhan. Dengan `MAIL_MAILER=log`, notifikasi backup gagal hanya masuk file log dan tidak dibaca siapa pun.
+12. Jalankan `php artisan backup:run` sekali secara manual, lalu `php artisan backup:list`. Kegagalan PATH `sqlite3` paling enak ketahuan sekarang, bukan jam 01:30 saat tidak ada yang melihat.
+13. Tambahkan disk luar (S3/rsync) ke `backup.destination.disks`. Arsip yang hanya duduk di disk yang sama dengan aplikasinya tidak menolong saat disknya yang mati.
 
 ## Verifikasi cepat
 
