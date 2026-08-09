@@ -17,7 +17,9 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, guru, kelas, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, plus UI kelola pengguna & role.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, dan backup terjadwal.
+
+Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
 Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, dan `backup_schedules`.
 
@@ -85,7 +87,7 @@ public function canAccessPanel(Panel $panel): bool
 
 Dua hal yang sengaja begini, jangan "disederhanakan":
 
-- **Cek permission, bukan `hasRole('super-admin')`.** Kalau nanti role `guru` perlu masuk panel, cukup beri permission-nya — tidak perlu menyentuh model User lagi.
+- **Cek permission, bukan `hasRole('super-admin')`.** Ini yang membuat role `guru` dan `karyawan` bisa masuk panel hanya dengan diberi `akses-panel-admin`, tanpa menyentuh model User sama sekali.
 - **Cabang `default` = `false`.** Panel kedua (guru, siswa, wali murid) **tertutup sampai ditambahkan eksplisit** ke `match`, tidak diam-diam ikut aturan admin.
 
 ## Otorisasi (spatie/laravel-permission)
@@ -100,7 +102,7 @@ Jangan tulis string mentah. Sumber kebenarannya:
 
 | File | Isi |
 |---|---|
-| `app/Enums/Role.php` | `SuperAdmin = 'super-admin'` |
+| `app/Enums/Role.php` | `Developer`, `SuperAdmin`, `Admin`, `Guru`, `Karyawan`, `Murid` |
 | `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole`, `KelolaBackup` |
 
 ```php
@@ -108,7 +110,28 @@ $user->can(Permission::LihatLogAktivitas->value);
 $user->assignRole(Role::SuperAdmin->value);
 ```
 
-**Menambah permission baru = dua langkah.** Tambah case di enum, lalu jalankan `php artisan db:seed --class=RolePermissionSeeder`. Case enum tanpa baris di tabel `permissions` akan selalu `false`. Tes `test_every_enum_permission_is_seeded` menangkap kalau langkah kedua terlewat.
+**Menambah permission baru = dua langkah.** Tambah case di enum, lalu jalankan `php artisan db:seed --class=RolePermissionSeeder`. Case enum tanpa baris di tabel `permissions` akan selalu `false`. Tes `test_every_enum_permission_is_seeded` menangkap kalau langkah kedua terlewat. Hal yang sama berlaku untuk role — tesnya `test_every_enum_role_is_seeded`.
+
+### Role yang ada dan izin bawaannya
+
+`Role::permissions()` di enum adalah sumber kebenarannya, dan itulah yang dibaca `RolePermissionSeeder`:
+
+| Role | Izin bawaan | Catatan |
+|---|---|---|
+| `developer` | **semua** (`Permission::cases()`) | Eksplisit, bukan lewat gate — lihat di bawah |
+| `super-admin` | *tidak ada* | Lolos semua lewat `Gate::before` |
+| `admin` | `akses-panel-admin`, `kelola-pengguna`, `lihat-log-aktivitas` | Sengaja tanpa `kelola-role` dan `kelola-backup` |
+| `guru` | `akses-panel-admin` | Belum ada modul untuknya |
+| `karyawan` | `akses-panel-admin` | Belum ada modul untuknya |
+| `murid` | *tidak ada* | Tidak masuk panel admin |
+
+**`developer` bukan super-admin kedua.** Dia memegang tiap izin sebagai baris nyata di `role_has_permissions`, tidak lewat `Gate::before`. Bedanya baru terasa saat modul bertambah: policy modul baru **tetap berlaku** untuk developer, dan izin yang baru ditambahkan ke enum harus diberikan secara sadar (lewat seeder). Satu-satunya role yang melewati semuanya tetap `super-admin`. Tes `test_developer_holds_every_permission_without_bypassing_the_gate` mengunci perbedaan ini.
+
+**`admin` sengaja tidak dapat `kelola-role`.** Siapa pun yang memegangnya bisa membuat role berisi izin apa pun lalu memberikannya ke dirinya sendiri — praktis setara developer. `kelola-backup` juga ditahan karena berjarak satu klik dari mengunduh seluruh isi database.
+
+**Seeder menambah, tidak pernah sync.** `givePermissionTo` dipakai, bukan `syncPermissions`. Ini disengaja: langkah 6 checklist deploy menjalankan seeder ini di **setiap** rilis, dan sync akan diam-diam membatalkan setiap perubahan izin yang dibuat lewat panel sejak deploy terakhir. Konsekuensinya, menghapus izin dari `permissions()` **tidak** mencabutnya di instalasi yang sudah jalan — itu harus dilakukan manual lewat panel. Dikunci `test_reseeding_does_not_revoke_a_permission_granted_by_hand`.
+
+Role selain `super-admin` **tidak dikunci** dari edit/hapus di panel. Namanya tidak dirujuk dari kode saat runtime, jadi mengubahnya tidak memecahkan apa pun — tapi user yang sudah memegang role itu ikut kehilangannya, dan seeder hanya akan membuat ulang role kosong tanpa mengembalikan penggunanya.
 
 ### super-admin
 
@@ -167,8 +190,8 @@ DeleteAction::make()
 ### Lewat CLI
 
 ```bash
-php artisan permission:create-role guru
-php artisan tinker --execute="App\Models\User::where('email','x@y.com')->first()->assignRole('super-admin');"
+php artisan permission:create-role wali-kelas
+php artisan tinker --execute="App\Models\User::where('email','x@y.com')->first()->assignRole('developer');"
 ```
 
 Setelah mengubah role/permission langsung lewat SQL (bukan lewat model), bersihkan cache:
@@ -177,7 +200,10 @@ Setelah mengubah role/permission langsung lewat SQL (bukan lewat model), bersihk
 php artisan permission:cache-reset
 ```
 
-Jangan pakai `permission:create-permission` — izin harus lahir dari enum, lihat bagian di atas.
+Dua batasan yang berbeda, jangan tertukar:
+
+- **Izin tidak boleh lahir dari CLI.** Jangan pakai `permission:create-permission` — tiap nama izin adalah case di `App\Enums\Permission` dan dirujuk dari `canAccess()` atau `can()`. Izin yang tidak ada di enum tidak cocok dengan pengecekan mana pun.
+- **Role tambahan boleh.** Enam role di enum adalah bawaan, bukan daftar tertutup. Role tambahan seperti `wali-kelas` sah dibuat lewat CLI atau panel — yang penting izin yang dicentang ke dalamnya sudah ada di enum. Yang perlu diingat: role di luar enum tidak dibuat ulang oleh seeder, jadi kalau terhapus ia hilang beserta penugasannya.
 
 ### Kolom `is_admin` sudah tidak ada
 
@@ -185,7 +211,7 @@ Dulu akses panel ditentukan kolom boolean `users.is_admin`. Migrasi `2026_08_09_
 
 ## Seeder
 
-`php artisan migrate:fresh --seed` menghasilkan satu user admin siap pakai:
+`php artisan migrate:fresh --seed` menghasilkan enam role beserta izin bawaannya (lihat *Role yang ada dan izin bawaannya*) plus satu user admin siap pakai:
 
 | Field | Nilai |
 |---|---|
@@ -193,7 +219,9 @@ Dulu akses panel ditentukan kolom boolean `users.is_admin`. Migrasi `2026_08_09_
 | Password | `admin` |
 | Role | `super-admin` |
 
-Urutannya penting: `RolePermissionSeeder` membuat role dan permission, baru `AdminUserSeeder` memberikan rolenya. Keduanya idempoten (`findOrCreate` / `updateOrCreate`), aman dijalankan berulang tanpa `migrate:fresh`.
+Hanya user itu yang dibuat. Lima role lainnya lahir tanpa pemegang — penugasannya lewat menu **Pengguna** di panel.
+
+Urutannya penting: `RolePermissionSeeder` membuat role dan permission, baru `AdminUserSeeder` memberikan rolenya. Keduanya idempoten (`findOrCreate` / `updateOrCreate` / `givePermissionTo`), aman dijalankan berulang tanpa `migrate:fresh`.
 
 **Kredensial dev saja.** Jangan pernah jalankan `AdminUserSeeder` di produksi. `RolePermissionSeeder` aman — isinya cuma role dan permission, tanpa user.
 
@@ -471,7 +499,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | File | Yang dijaga |
 |---|---|
 | `AdminPanelAccessTest` | Siapa boleh membuka `/admin`, dan panel id asing tidak mewarisi aturan admin |
-| `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, izin panel vs izin log terpisah, seeder idempoten |
+| `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, developer tidak ikut bypass, tiap role dapat izin bawaannya dan tidak lebih, seeder idempoten & tidak mencabut |
 | `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
 | `AccessManagementUiTest` | Form pengguna & role, pengaman anti-terkunci, perubahan otorisasi masuk log |
 | `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false` |
@@ -484,7 +512,9 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus karena terlihat sepele:
 
 - `assertCount(1, ...)` pada tes log: menangkap listener yang terdaftar dua kali (lihat bagian `recordX`).
-- `test_every_enum_permission_is_seeded`: menangkap case enum yang lupa di-seed.
+- `test_every_enum_permission_is_seeded` dan `test_every_enum_role_is_seeded`: menangkap case enum yang lupa di-seed.
+- `test_each_role_receives_its_baseline_permissions_and_no_more`: memeriksa **dua arah**. Menguji grantnya saja akan meloloskan role yang kelebihan izin, dan itu justru kegagalan yang penting.
+- `test_reseeding_does_not_revoke_a_permission_granted_by_hand`: menangkap seeder yang diubah jadi `syncPermissions`, yang akan membuat tiap deploy membatalkan penyesuaian izin lewat panel.
 - `test_the_package_resolves_the_app_models`: menangkap `config/permission.php` yang balik menunjuk model Spatie.
 - `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
 - `callTableAction` + `assertModelExists` di `TableActionAuthorizationTest`: menangkap tombol hapus yang lolos pengaman. Memanggil `canDelete()` saja tidak cukup.
@@ -533,6 +563,8 @@ php artisan db:seed --class=RolePermissionSeeder
 ```
 
 Jangan lewat, case enum tanpa baris di tabel `permissions` **selalu** `false`.
+
+Lalu tentukan role mana yang mendapatkannya di `Role::permissions()`. `developer` otomatis ikut (`Permission::cases()`), sisanya tidak — role `guru` tidak akan bisa melihat modul guru sampai izinnya ditambahkan ke sana.
 
 **4. Buat resource Filament**
 
@@ -654,7 +686,7 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 3. `npm run build`
 4. `php artisan migrate --force`
 5. Pastikan `APP_DEBUG=false` dan `DEBUGBAR_ENABLED` tidak `true`.
-6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini tidak membuat user, jadi aman di produksi.
+6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini tidak membuat user, jadi aman di produksi. Aman juga diulang tiap rilis: ia menambah, tidak pernah mencabut, jadi penyesuaian izin yang dibuat lewat panel tetap utuh.
 7. **Jangan jalankan `db:seed` polos** — itu ikut menjalankan `AdminUserSeeder` yang memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu `assignRole('super-admin')` manual. Tanpa role, akun barunya kena 403.
 8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` dan seluruh perintah backup tidak pernah jalan — `activity_log` tumbuh tanpa batas dan tidak ada arsip yang pernah dibuat.
 9. `sudo apt install sqlite3` — `backup:run` butuh binernya, ekstensi PHP saja tidak cukup.
@@ -706,8 +738,8 @@ Output yang diharapkan:
 
 ```
 model-role: App\Models\Role
-izin: akses-panel-admin, kelola-pengguna, kelola-role, lihat-log-aktivitas
-role: super-admin
+izin: akses-panel-admin, kelola-backup, kelola-pengguna, kelola-role, lihat-log-aktivitas
+role: admin, developer, guru, karyawan, murid, super-admin
 admin-role: super-admin
 akses-panel: true
 ```
