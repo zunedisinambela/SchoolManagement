@@ -15,7 +15,11 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Role & permission | spatie/laravel-permission 8 |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 
-Belum ada modul aplikasi — baru skeleton, panel admin, audit log, dan otorisasi. Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, plus lima tabel role/permission.
+Belum ada modul aplikasi (siswa, guru, kelas, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, plus UI kelola pengguna & role.
+
+Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, dan lima tabel role/permission.
+
+Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/permissions`, `/admin/activities`.
 
 ## Perintah
 
@@ -33,8 +37,25 @@ Panel `admin` di `app/Providers/Filament/AdminPanelProvider.php`, terdaftar di `
 - URL: `/admin`, login di `/admin/login`.
 - Resource, page, dan widget auto-discovery dari `app/Filament/Resources`, `app/Filament/Pages`, `app/Filament/Widgets`. Cukup buat file di sana, tidak perlu registrasi manual.
 - Generator: `php artisan make:filament-resource Siswa`, `make:filament-page`, `make:filament-widget`.
-- Buat user admin: `php artisan make:filament-user`, atau `php artisan migrate:fresh --seed` (lihat bagian Seeder).
+- Buat user: `php artisan migrate:fresh --seed` (lihat bagian Seeder), atau lewat menu **Pengguna** di panel. `php artisan make:filament-user` juga bisa, tapi akun hasilnya **langsung kena 403** sampai diberi role — lihat bagian Akses panel.
 - UI panel sudah berbahasa Indonesia otomatis — Filament membawa locale `id` sendiri dan mengikuti `APP_LOCALE`. Tidak perlu menerjemahkan apa pun untuk teks bawaan panel.
+
+### Struktur resource
+
+Filament 5 memecah resource jadi beberapa file. Ikuti pola yang sudah ada, jangan digabung ke satu file:
+
+```
+app/Filament/Resources/Users/
+├── UserResource.php          <- model, navigasi, canAccess/canEdit/canDelete
+├── Pages/                    <- ListUsers, CreateUser, EditUser, ViewUser
+├── Schemas/UserForm.php      <- form
+├── Schemas/UserInfolist.php  <- tampilan detail
+└── Tables/UsersTable.php     <- kolom, filter, aksi baris
+```
+
+Resource read-only (Log Aktivitas, Izin) sengaja **tidak punya** `Pages/Create*`, `Pages/Edit*`, dan `Schemas/*Form.php` — filenya dihapus, bukan sekadar disembunyikan.
+
+Navigasi dikelompokkan lewat `$navigationGroup`. Yang ada sekarang: grup **Manajemen Akses** (`$navigationSort` 10/20/30) dan Log Aktivitas tanpa grup (`$navigationSort` 90).
 
 **Asset panel di-gitignore.** `public/css/filament`, `public/js/filament`, `public/fonts/filament` adalah hasil generate, bukan source. Setelah `composer update` atau saat deploy **wajib** jalankan:
 
@@ -66,6 +87,8 @@ Dua hal yang sengaja begini, jangan "disederhanakan":
 ## Otorisasi (spatie/laravel-permission)
 
 Role dan permission disimpan di tabel `roles`, `permissions`, `model_has_roles`, `model_has_permissions`, `role_has_permissions`. Guard-nya `web`, sama dengan guard panel admin.
+
+Modelnya `App\Models\Role` dan `App\Models\Permission` — subclass model Spatie yang menambah pencatatan audit. **Jangan import dari `Spatie\Permission\Models\`**, penjelasannya di bagian Audit log.
 
 ### Nama role & permission ada di enum
 
@@ -209,7 +232,7 @@ Bentuk data per event, berguna saat menulis tes:
 
 - `default_except_attributes` di `config/activitylog.php` berisi `password` dan `remember_token`. **Jangan dikosongkan** — kalau kosong, hash password ikut tersimpan di `activity_log` tiap kali user di-update.
 - Kalau menambah model dengan kolom sensitif (NIK, nomor rekening, token), tambahkan `->logExcept([...])` di `getActivitylogOptions()`. Nilai ini digabung dengan `default_except_attributes`.
-- Listener `handleFailed` sengaja **tidak** membaca `$event->credentials['password']`. Jangan diubah jadi menyimpan seluruh array credentials.
+- Listener `recordFailed` sengaja **tidak** membaca `$event->credentials['password']`. Jangan diubah jadi menyimpan seluruh array credentials.
 
 ### Resource Filament — read-only
 
@@ -224,6 +247,43 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 ### Mematikan sementara
 
 `ACTIVITYLOG_ENABLED=false` di `.env`. Berguna saat impor data massal supaya tidak membanjiri tabel.
+
+## Tes
+
+`composer run test` — 39 tes, semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
+
+| File | Yang dijaga |
+|---|---|
+| `AdminPanelAccessTest` | Siapa boleh membuka `/admin`, dan panel id asing tidak mewarisi aturan admin |
+| `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, izin panel vs izin log terpisah, seeder idempoten |
+| `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
+| `AccessManagementUiTest` | Form pengguna & role, pengaman anti-terkunci, perubahan otorisasi masuk log |
+
+Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus karena terlihat sepele:
+
+- `assertCount(1, ...)` pada tes log: menangkap listener yang terdaftar dua kali (lihat bagian `recordX`).
+- `test_every_enum_permission_is_seeded`: menangkap case enum yang lupa di-seed.
+- `test_the_package_resolves_the_app_models`: menangkap `config/permission.php` yang balik menunjuk model Spatie.
+- `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
+
+Menulis tes halaman Filament pakai Livewire, bukan HTTP:
+
+```php
+Livewire::test(ListUsers::class)->assertSuccessful();
+Livewire::test(EditUser::class, ['record' => $user->getKey()])
+    ->fillForm(['name' => 'Baru'])
+    ->call('save')
+    ->assertHasNoFormErrors();
+```
+
+Factory `UserFactory` punya dua state untuk menyiapkan hak akses:
+
+```php
+User::factory()->superAdmin()->create();
+User::factory()->withPermissions([Permission::AksesPanelAdmin])->create();
+```
+
+Keduanya membuat role/permission-nya sendiri kalau seeder belum jalan.
 
 ## Tooling dev
 
@@ -300,6 +360,8 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 
 ## Verifikasi cepat
 
+### Lokalisasi
+
 ```bash
 php artisan config:clear
 php artisan tinker --execute="
@@ -308,7 +370,6 @@ echo now()->translatedFormat('l, d F Y H:i').PHP_EOL;
 echo __('validation.required', ['attribute' => 'nama']).PHP_EOL;
 echo __('filament-panels::auth/pages/login.title').PHP_EOL;
 "
-php artisan route:list --path=admin
 ```
 
 Output yang diharapkan:
@@ -319,3 +380,31 @@ Sabtu, 08 Agustus 2026 22:40
 Kolom nama wajib diisi.
 Masuk
 ```
+
+### Otorisasi & audit log
+
+```bash
+php artisan config:clear
+php artisan tinker --execute="
+\$u = App\Models\User::where('email','admin@admin.com')->first();
+echo 'model-role: '.config('permission.models.role').PHP_EOL;
+echo 'izin: '.App\Models\Permission::pluck('name')->implode(', ').PHP_EOL;
+echo 'role: '.App\Models\Role::pluck('name')->implode(', ').PHP_EOL;
+echo 'admin-role: '.\$u->getRoleNames()->implode(', ').PHP_EOL;
+echo 'akses-panel: '.var_export(\$u->canAccessPanel(Filament\Facades\Filament::getPanel('admin')), true).PHP_EOL;
+"
+php artisan schedule:list
+php artisan route:list --path=admin
+```
+
+Output yang diharapkan:
+
+```
+model-role: App\Models\Role
+izin: akses-panel-admin, kelola-pengguna, kelola-role, lihat-log-aktivitas
+role: super-admin
+admin-role: super-admin
+akses-panel: true
+```
+
+Kalau `model-role` menunjuk `Spatie\Permission\Models\Role`, perubahan role tidak masuk audit log — cek `config/permission.php`.
