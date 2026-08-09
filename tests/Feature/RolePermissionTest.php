@@ -101,6 +101,101 @@ class RolePermissionTest extends TestCase
         ]);
     }
 
+    public function test_every_enum_role_is_seeded(): void
+    {
+        $this->seed(RolePermissionSeeder::class);
+
+        foreach (RoleEnum::cases() as $role) {
+            $this->assertDatabaseHas('roles', [
+                'name' => $role->value,
+                'guard_name' => 'web',
+            ]);
+        }
+    }
+
+    /**
+     * Checks both directions: the role holds what its map lists, and nothing
+     * else. Only asserting the grants would let a stray permission through —
+     * and an over-granted role is the failure that matters here.
+     */
+    public function test_each_role_receives_its_baseline_permissions_and_no_more(): void
+    {
+        $this->seed(RolePermissionSeeder::class);
+
+        foreach (RoleEnum::cases() as $roleEnum) {
+            // Excluded on purpose: Gate::before answers true for super-admin
+            // before the permission table is consulted, so every check below
+            // would pass regardless of what the role actually holds.
+            if ($roleEnum === RoleEnum::SuperAdmin) {
+                continue;
+            }
+
+            $granted = array_column($roleEnum->permissions(), 'value');
+
+            $user = User::factory()->create();
+            $user->assignRole($roleEnum->value);
+
+            foreach (PermissionEnum::cases() as $permission) {
+                $this->assertSame(
+                    in_array($permission->value, $granted, true),
+                    $user->can($permission->value),
+                    "Role {$roleEnum->value} terhadap izin {$permission->value}.",
+                );
+            }
+        }
+    }
+
+    /**
+     * The one distinction that makes developer a different role rather than a
+     * second super-admin. It holds every permission that exists, but an ability
+     * nobody granted is still denied — so a policy written for a future module
+     * applies to it, and a new permission has to be handed over on purpose.
+     */
+    public function test_developer_holds_every_permission_without_bypassing_the_gate(): void
+    {
+        $this->seed(RolePermissionSeeder::class);
+
+        $user = User::factory()->create();
+        $user->assignRole(RoleEnum::Developer->value);
+
+        foreach (PermissionEnum::cases() as $permission) {
+            $this->assertTrue($user->can($permission->value));
+        }
+
+        $this->assertFalse($user->can('kemampuan-yang-belum-pernah-dibuat'));
+    }
+
+    /**
+     * The empty permission list on super-admin is intentional, not an omission.
+     * Anything seeded onto it would be dead weight that reads, in the panel, as
+     * if the role were bounded by it.
+     */
+    public function test_super_admin_is_seeded_without_explicit_permissions(): void
+    {
+        $this->seed(RolePermissionSeeder::class);
+
+        $this->assertCount(0, Role::findByName(RoleEnum::SuperAdmin->value)->permissions);
+    }
+
+    /**
+     * The seeder adds, never syncs. Deploy step 6 runs it on every release, so
+     * a sync would quietly undo every authorization change made through the
+     * panel since the last deploy.
+     */
+    public function test_reseeding_does_not_revoke_a_permission_granted_by_hand(): void
+    {
+        $this->seed(RolePermissionSeeder::class);
+
+        $murid = Role::findByName(RoleEnum::Murid->value);
+        $murid->givePermissionTo(PermissionEnum::AksesPanelAdmin->value);
+
+        $this->seed(RolePermissionSeeder::class);
+
+        $this->assertTrue(
+            $murid->fresh()->hasPermissionTo(PermissionEnum::AksesPanelAdmin->value),
+        );
+    }
+
     public function test_the_seeded_admin_holds_the_super_admin_role(): void
     {
         $this->seed(RolePermissionSeeder::class);
@@ -123,7 +218,15 @@ class RolePermissionTest extends TestCase
         $this->seed(AdminUserSeeder::class);
 
         $this->assertSame(1, Role::where('name', RoleEnum::SuperAdmin->value)->count());
+        $this->assertSame(count(RoleEnum::cases()), Role::count());
         $this->assertSame(count(PermissionEnum::cases()), Permission::count());
+
+        // A duplicated pivot row would not change what the role can do, so it
+        // only ever surfaces as a slowly growing table.
+        $this->assertCount(
+            count(PermissionEnum::cases()),
+            Role::findByName(RoleEnum::Developer->value)->permissions,
+        );
         $this->assertSame(1, User::where('email', 'admin@admin.com')->count());
         $this->assertTrue(
             User::where('email', 'admin@admin.com')->firstOrFail()->hasRole(RoleEnum::SuperAdmin->value),

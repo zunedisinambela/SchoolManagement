@@ -19,6 +19,12 @@ class RolePermissionSeeder extends Seeder
      * Permissions are never deleted here — a permission dropped from the enum
      * has to be removed deliberately, so a rename cannot silently revoke
      * access that was granted by hand.
+     *
+     * Role grants follow the same rule. givePermissionTo adds without
+     * detaching, so a permission an admin granted through the panel survives a
+     * re-run. Syncing instead would make the deploy checklist's "run this
+     * seeder" step quietly undo every authorization change made since the last
+     * deploy — the kind of regression nobody connects back to a deploy.
      */
     public function run(): void
     {
@@ -28,9 +34,15 @@ class RolePermissionSeeder extends Seeder
             Permission::findOrCreate($permission->value, 'web');
         }
 
-        // super-admin is granted everything by the Gate::before hook in
-        // AppServiceProvider, so it deliberately holds no explicit permissions.
-        Role::findOrCreate(RoleEnum::SuperAdmin->value, 'web');
+        foreach (RoleEnum::cases() as $roleEnum) {
+            $role = Role::findOrCreate($roleEnum->value, 'web');
+
+            $permissions = array_column($roleEnum->permissions(), 'value');
+
+            if ($permissions !== []) {
+                $role->givePermissionTo($permissions);
+            }
+        }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
     }
