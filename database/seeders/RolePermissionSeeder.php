@@ -34,6 +34,16 @@ class RolePermissionSeeder extends Seeder
             Permission::findOrCreate($permission->value, 'web');
         }
 
+        // Not redundant with the flush above, and not something the package
+        // does for us here. Spatie invalidates its permission cache from a
+        // `created` model event, and DatabaseSeeder wraps every seeder in
+        // Model::withoutEvents() -- so on a fresh database the rows just
+        // written stay invisible to the registrar, which cached an empty
+        // collection during the very first findOrCreate lookup. givePermissionTo
+        // reads that cache, not the table, and fails with PermissionDoesNotExist
+        // for a permission sitting right there in the database.
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         foreach (RoleEnum::cases() as $roleEnum) {
             $role = Role::findOrCreate($roleEnum->value, 'web');
 

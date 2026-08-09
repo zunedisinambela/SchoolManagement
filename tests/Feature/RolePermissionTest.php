@@ -208,6 +208,41 @@ class RolePermissionTest extends TestCase
     }
 
     /**
+     * Seeding through DatabaseSeeder, the way `migrate:fresh --seed` does.
+     *
+     * Every other test here calls RolePermissionSeeder directly, and that path
+     * cannot reproduce this: DatabaseSeeder wraps its seeders in
+     * Model::withoutEvents(), which silences the `created` event Spatie uses to
+     * invalidate its permission cache. On an empty database the registrar caches
+     * an empty collection during the seeder's first findOrCreate lookup, and
+     * every grant afterwards fails with PermissionDoesNotExist for a permission
+     * that is sitting in the table. Asserting on Permission::count() would stay
+     * green through all of it -- the rows are written either way. Only a grant
+     * check fails.
+     */
+    public function test_seeding_through_the_database_seeder_grants_role_permissions(): void
+    {
+        $this->seed();
+
+        // guru, not super-admin: it holds exactly one permission as a real row,
+        // so a stale cache cannot hide behind Gate::before answering true.
+        $this->assertTrue(
+            Role::findByName(RoleEnum::Guru->value)
+                ->hasPermissionTo(PermissionEnum::AksesPanelAdmin->value),
+        );
+
+        $this->assertCount(
+            count(PermissionEnum::cases()),
+            Role::findByName(RoleEnum::Developer->value)->permissions,
+        );
+
+        $guru = User::factory()->create();
+        $guru->assignRole(RoleEnum::Guru->value);
+
+        $this->assertTrue($guru->can(PermissionEnum::AksesPanelAdmin->value));
+    }
+
+    /**
      * Running the seeders twice must not duplicate rows or drop the role.
      */
     public function test_the_seeders_are_idempotent(): void
