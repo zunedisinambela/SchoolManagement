@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\Users;
 
-use App\Enums\Permission;
 use App\Enums\Role as RoleEnum;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
@@ -70,7 +69,7 @@ class UserResource extends Resource
 
     public static function canAccess(): bool
     {
-        return (bool) Filament::auth()->user()?->can(Permission::KelolaPengguna->value);
+        return (bool) Filament::auth()->user()?->can('ViewAny:User');
     }
 
     /**

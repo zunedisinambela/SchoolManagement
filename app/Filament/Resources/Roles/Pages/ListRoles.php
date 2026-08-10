@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Resources\Roles\Pages;
 
 use App\Filament\Resources\Roles\RoleResource;
@@ -10,6 +12,10 @@ class ListRoles extends ListRecords
 {
     protected static string $resource = RoleResource::class;
 
+    /**
+     * `getActions()` di stub hasil `shield:publish` sudah bukan hook Filament 5
+     * — tanpa perubahan ini tombol Buat tidak pernah dirender.
+     */
     protected function getHeaderActions(): array
     {
         return [

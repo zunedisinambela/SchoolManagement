@@ -3,7 +3,6 @@
 namespace App\Filament\Pages;
 
 use App\Enums\BackupFrequency;
-use App\Enums\Permission;
 use App\Jobs\RunBackup;
 use App\Models\BackupSchedule;
 use App\Support\Backup\RestoreArchive;
@@ -69,7 +68,7 @@ class Backups extends Page implements HasTable
      */
     public static function canAccess(): bool
     {
-        return (bool) Filament::auth()->user()?->can(Permission::KelolaBackup->value);
+        return (bool) Filament::auth()->user()?->can('View:Backups');
     }
 
     public function getSubheading(): ?string
@@ -223,7 +222,7 @@ class Backups extends Page implements HasTable
                     // archive's `users` table wholesale. Hidden rather than
                     // disabled, because there is no state in which the viewer
                     // could earn the right by doing something else first.
-                    ->visible(fn (): bool => (bool) Filament::auth()->user()?->can(Permission::PulihkanBackup->value))
+                    ->visible(fn (): bool => (bool) Filament::auth()->user()?->can('Restore:Backup'))
                     ->modalHeading(fn (array $record): string => __('Pulihkan dari :berkas?', ['berkas' => $record['nama']]))
                     ->modalDescription(__('Seluruh isi database sekarang diganti dengan isi arsip ini. Data yang masuk setelah arsip dibuat akan hilang. Kamu ikut logout karena tabel sesi juga ikut diganti. Salinan database sekarang disimpan otomatis sebelum penggantian.'))
                     ->modalSubmitActionLabel(__('Pulihkan sekarang'))
@@ -420,7 +419,7 @@ class Backups extends Page implements HasTable
         // request. Filament actions carry no automatic authorization, so an
         // action reachable by name is reachable by anyone who knows the name.
         abort_unless(
-            (bool) Filament::auth()->user()?->can(Permission::PulihkanBackup->value),
+            (bool) Filament::auth()->user()?->can('Restore:Backup'),
             403,
         );
 

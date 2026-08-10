@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Filament\Pages\Backups;
 use App\Jobs\RunBackup;
 use App\Models\BackupSchedule;
@@ -38,7 +37,7 @@ class BackupArchivePasswordTest extends TestCase
     protected function admin(): User
     {
         $user = User::factory()
-            ->withPermissions([PermissionEnum::AksesPanelAdmin, PermissionEnum::KelolaBackup])
+            ->withPermissions(['Access:AdminPanel', 'View:Backups'])
             ->create();
 
         $this->actingAs($user);

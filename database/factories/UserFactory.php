@@ -2,7 +2,6 @@
 
 namespace Database\Factories;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Enums\Role as RoleEnum;
 use App\Models\Permission;
 use App\Models\Role;
@@ -49,27 +48,33 @@ class UserFactory extends Factory
 
     /**
      * Give the user the super-admin role, creating it if the seeders have not
-     * run. Gate::before grants this role every permission.
+     * run. The gate filament-shield installs grants this role every permission.
      */
     public function superAdmin(): static
     {
         return $this->afterCreating(function (User $user) {
-            $user->assignRole(Role::findOrCreate(RoleEnum::SuperAdmin->value, 'web'));
+            $user->assignRole(Role::findOrCreate(RoleEnum::superAdminName(), 'web'));
         });
     }
 
     /**
      * Give the user exactly the listed permissions and no role.
      *
-     * @param  PermissionEnum|array<int, PermissionEnum>  $permissions
+     * Takes shield permission names as strings — `ViewAny:User`,
+     * `Access:AdminPanel`. They are created on demand so a test does not have
+     * to run `shield:generate` first, which means a typo produces a user with a
+     * permission nothing checks rather than an error. Tests that care about a
+     * specific gate should assert on the behaviour, not on the grant.
+     *
+     * @param  string|array<int, string>  $permissions
      */
-    public function withPermissions(PermissionEnum|array $permissions): static
+    public function withPermissions(string|array $permissions): static
     {
         $permissions = is_array($permissions) ? $permissions : [$permissions];
 
         return $this->afterCreating(function (User $user) use ($permissions) {
             foreach ($permissions as $permission) {
-                $user->givePermissionTo(Permission::findOrCreate($permission->value, 'web'));
+                $user->givePermissionTo(Permission::findOrCreate($permission, 'web'));
             }
         });
     }

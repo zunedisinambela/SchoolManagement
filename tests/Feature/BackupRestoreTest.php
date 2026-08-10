@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Filament\Pages\Backups;
 use App\Models\User;
 use App\Support\Backup\RestoreArchive;
@@ -88,9 +87,9 @@ class BackupRestoreTest extends TestCase
     {
         $user = User::factory()
             ->withPermissions([
-                PermissionEnum::AksesPanelAdmin,
-                PermissionEnum::KelolaBackup,
-                PermissionEnum::PulihkanBackup,
+                'Access:AdminPanel',
+                'View:Backups',
+                'Restore:Backup',
             ])
             ->create();
 
@@ -145,7 +144,7 @@ class BackupRestoreTest extends TestCase
     public function test_the_action_is_hidden_without_the_restore_permission(): void
     {
         $user = User::factory()
-            ->withPermissions([PermissionEnum::AksesPanelAdmin, PermissionEnum::KelolaBackup])
+            ->withPermissions(['Access:AdminPanel', 'View:Backups'])
             ->create();
 
         $this->actingAs($user);

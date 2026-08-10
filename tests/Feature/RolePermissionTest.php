@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Enums\Role as RoleEnum;
 use App\Filament\Resources\Activities\ActivityResource;
 use App\Models\Permission;
@@ -49,8 +48,8 @@ class RolePermissionTest extends TestCase
     {
         $user = User::factory()->superAdmin()->create();
 
-        $this->assertTrue($user->can(PermissionEnum::AksesPanelAdmin->value));
-        $this->assertTrue($user->can(PermissionEnum::LihatLogAktivitas->value));
+        $this->assertTrue($user->can('Access:AdminPanel'));
+        $this->assertTrue($user->can('ViewAny:Activity'));
         $this->assertTrue($user->can('kemampuan-yang-belum-pernah-dibuat'));
     }
 
@@ -62,7 +61,7 @@ class RolePermissionTest extends TestCase
     public function test_panel_access_and_log_access_are_independent(): void
     {
         $user = User::factory()
-            ->withPermissions(PermissionEnum::AksesPanelAdmin)
+            ->withPermissions('Access:AdminPanel')
             ->create();
 
         $this->actingAs($user);
@@ -75,7 +74,7 @@ class RolePermissionTest extends TestCase
     public function test_granting_the_log_permission_opens_the_resource(): void
     {
         $user = User::factory()
-            ->withPermissions([PermissionEnum::AksesPanelAdmin, PermissionEnum::LihatLogAktivitas])
+            ->withPermissions(['Access:AdminPanel', 'ViewAny:Activity'])
             ->create();
 
         $this->actingAs($user);
@@ -84,21 +83,70 @@ class RolePermissionTest extends TestCase
         $this->get(ActivityResource::getUrl('index'))->assertSuccessful();
     }
 
-    public function test_every_enum_permission_is_seeded(): void
+    /**
+     * The gap left behind by dropping App\Enums\Permission.
+     *
+     * Baseline permissions are now plain strings in App\Enums\Role, unchecked
+     * by the type system. A typo, or a permission renamed by a later
+     * `shield:generate`, grants nothing at all — givePermissionTo would throw
+     * during seeding, but a name that merely stops matching any check fails
+     * silently. This asserts every baseline string is a row shield actually
+     * generated.
+     */
+    public function test_every_baseline_permission_exists(): void
     {
         $this->seed(RolePermissionSeeder::class);
 
-        foreach (PermissionEnum::cases() as $permission) {
-            $this->assertDatabaseHas('permissions', [
-                'name' => $permission->value,
-                'guard_name' => 'web',
-            ]);
+        $generated = Permission::where('guard_name', 'web')->pluck('name')->all();
+
+        foreach (RoleEnum::cases() as $roleEnum) {
+            foreach ($roleEnum->permissions() as $permission) {
+                $this->assertContains(
+                    $permission,
+                    $generated,
+                    "Role {$roleEnum->value} meminta izin '{$permission}' yang tidak pernah digenerate shield.",
+                );
+            }
         }
 
         $this->assertDatabaseHas('roles', [
             'name' => RoleEnum::SuperAdmin->value,
             'guard_name' => 'web',
         ]);
+    }
+
+    /**
+     * Two places name the super admin: App\Enums\Role and shield's config.
+     * Shield's gate reads the config; the seeder and the is_admin migration
+     * read the enum. If they drift, the role that bypasses everything and the
+     * role that gets seeded are two different rows, and nobody holds the gate.
+     */
+    public function test_the_super_admin_name_matches_shield(): void
+    {
+        $this->assertSame(
+            RoleEnum::SuperAdmin->value,
+            config('filament-shield.super_admin.name'),
+        );
+    }
+
+    /**
+     * `define_via_gate` false — the package default — makes shield hand super
+     * admin every permission as real rows instead of installing the gate. That
+     * turns it into a second `developer` and quietly removes the bypass.
+     */
+    public function test_shield_grants_super_admin_through_the_gate(): void
+    {
+        $this->assertTrue(config('filament-shield.super_admin.define_via_gate'));
+        $this->assertSame('before', config('filament-shield.super_admin.intercept_gate'));
+    }
+
+    /**
+     * shield's `panel_user` role would be a second way into the panel that no
+     * permission check reveals — canAccessPanel() asks for a permission.
+     */
+    public function test_the_shield_panel_user_role_is_disabled(): void
+    {
+        $this->assertFalse(config('filament-shield.panel_user.enabled'));
     }
 
     public function test_every_enum_role_is_seeded(): void
@@ -130,16 +178,19 @@ class RolePermissionTest extends TestCase
                 continue;
             }
 
-            $granted = array_column($roleEnum->permissions(), 'value');
+            $granted = $roleEnum->permissions();
 
             $user = User::factory()->create();
             $user->assignRole($roleEnum->value);
 
-            foreach (PermissionEnum::cases() as $permission) {
+            // Iterates the generated rows rather than a hand-written list, so
+            // a permission added by a future `shield:generate` is checked
+            // against every role the moment it exists.
+            foreach (Permission::where('guard_name', 'web')->pluck('name') as $permission) {
                 $this->assertSame(
-                    in_array($permission->value, $granted, true),
-                    $user->can($permission->value),
-                    "Role {$roleEnum->value} terhadap izin {$permission->value}.",
+                    in_array($permission, $granted, true),
+                    $user->can($permission),
+                    "Role {$roleEnum->value} terhadap izin {$permission}.",
                 );
             }
         }
@@ -158,8 +209,8 @@ class RolePermissionTest extends TestCase
         $user = User::factory()->create();
         $user->assignRole(RoleEnum::Developer->value);
 
-        foreach (PermissionEnum::cases() as $permission) {
-            $this->assertTrue($user->can($permission->value));
+        foreach (Permission::where('guard_name', 'web')->pluck('name') as $permission) {
+            $this->assertTrue($user->can($permission));
         }
 
         $this->assertFalse($user->can('kemampuan-yang-belum-pernah-dibuat'));
@@ -187,12 +238,12 @@ class RolePermissionTest extends TestCase
         $this->seed(RolePermissionSeeder::class);
 
         $murid = Role::findByName(RoleEnum::Murid->value);
-        $murid->givePermissionTo(PermissionEnum::AksesPanelAdmin->value);
+        $murid->givePermissionTo('Access:AdminPanel');
 
         $this->seed(RolePermissionSeeder::class);
 
         $this->assertTrue(
-            $murid->fresh()->hasPermissionTo(PermissionEnum::AksesPanelAdmin->value),
+            $murid->fresh()->hasPermissionTo('Access:AdminPanel'),
         );
     }
 
@@ -228,18 +279,18 @@ class RolePermissionTest extends TestCase
         // so a stale cache cannot hide behind Gate::before answering true.
         $this->assertTrue(
             Role::findByName(RoleEnum::Guru->value)
-                ->hasPermissionTo(PermissionEnum::AksesPanelAdmin->value),
+                ->hasPermissionTo('Access:AdminPanel'),
         );
 
         $this->assertCount(
-            count(PermissionEnum::cases()),
+            Permission::where('guard_name', 'web')->count(),
             Role::findByName(RoleEnum::Developer->value)->permissions,
         );
 
         $guru = User::factory()->create();
         $guru->assignRole(RoleEnum::Guru->value);
 
-        $this->assertTrue($guru->can(PermissionEnum::AksesPanelAdmin->value));
+        $this->assertTrue($guru->can('Access:AdminPanel'));
     }
 
     /**
@@ -249,17 +300,25 @@ class RolePermissionTest extends TestCase
     {
         $this->seed(RolePermissionSeeder::class);
         $this->seed(AdminUserSeeder::class);
+
+        $permissionsAfterFirstRun = Permission::count();
+
         $this->seed(RolePermissionSeeder::class);
         $this->seed(AdminUserSeeder::class);
 
         $this->assertSame(1, Role::where('name', RoleEnum::SuperAdmin->value)->count());
         $this->assertSame(count(RoleEnum::cases()), Role::count());
-        $this->assertSame(count(PermissionEnum::cases()), Permission::count());
+
+        // Compared against the first run rather than against a literal: shield
+        // decides how many permissions exist, and that number changes with
+        // every resource added. What must not change is that a second run adds
+        // none.
+        $this->assertSame($permissionsAfterFirstRun, Permission::count());
 
         // A duplicated pivot row would not change what the role can do, so it
         // only ever surfaces as a slowly growing table.
         $this->assertCount(
-            count(PermissionEnum::cases()),
+            $permissionsAfterFirstRun,
             Role::findByName(RoleEnum::Developer->value)->permissions,
         );
         $this->assertSame(1, User::where('email', 'admin@admin.com')->count());

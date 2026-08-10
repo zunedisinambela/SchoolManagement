@@ -17,8 +17,9 @@ use Spatie\Permission\Models\Permission as SpatiePermission;
  *
  * Registered as `models.permission` in config/permission.php.
  *
- * Not to be confused with App\Enums\Permission, which holds the permission
- * *names*. Import one of the two under an alias wherever both are needed.
+ * Permission *names* are no longer hand-written anywhere: filament-shield
+ * generates them from the panel's resources, pages and widgets. Rows are
+ * created by `shield:generate`, not by this class.
  */
 class Permission extends SpatiePermission
 {

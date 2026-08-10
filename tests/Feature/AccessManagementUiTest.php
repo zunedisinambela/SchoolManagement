@@ -2,10 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Enums\Role as RoleEnum;
-use App\Filament\Resources\Permissions\Pages\ListPermissions;
-use App\Filament\Resources\Permissions\PermissionResource;
+use App\Filament\Resources\Activities\ActivityResource;
 use App\Filament\Resources\Roles\Pages\CreateRole;
 use App\Filament\Resources\Roles\Pages\EditRole;
 use App\Filament\Resources\Roles\Pages\ListRoles;
@@ -18,6 +16,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
@@ -42,22 +41,20 @@ class AccessManagementUiTest extends TestCase
 
     public function test_the_pages_are_closed_to_a_user_without_the_permissions(): void
     {
-        $this->actingAs(User::factory()->withPermissions(PermissionEnum::AksesPanelAdmin)->create());
+        $this->actingAs(User::factory()->withPermissions('Access:AdminPanel')->create());
 
         $this->assertFalse(UserResource::canAccess());
         $this->assertFalse(RoleResource::canAccess());
-        $this->assertFalse(PermissionResource::canAccess());
 
         $this->get(UserResource::getUrl('index'))->assertForbidden();
         $this->get(RoleResource::getUrl('index'))->assertForbidden();
-        $this->get(PermissionResource::getUrl('index'))->assertForbidden();
     }
 
     public function test_the_two_permissions_open_their_own_pages_only(): void
     {
         $this->actingAs(User::factory()->withPermissions([
-            PermissionEnum::AksesPanelAdmin,
-            PermissionEnum::KelolaPengguna,
+            'Access:AdminPanel',
+            'ViewAny:User',
         ])->create());
 
         $this->assertTrue(UserResource::canAccess());
@@ -74,7 +71,6 @@ class AccessManagementUiTest extends TestCase
 
         Livewire::test(ListUsers::class)->assertSuccessful();
         Livewire::test(ListRoles::class)->assertSuccessful();
-        Livewire::test(ListPermissions::class)->assertSuccessful();
         Livewire::test(CreateUser::class)->assertSuccessful();
         Livewire::test(CreateRole::class)->assertSuccessful();
     }
@@ -173,21 +169,32 @@ class AccessManagementUiTest extends TestCase
         $this->admin();
         $this->seed(RolePermissionSeeder::class);
 
-        $permission = Permission::where('name', PermissionEnum::LihatLogAktivitas->value)->firstOrFail();
-
+        /*
+         * shield names each checkbox list after what it groups: the resource
+         * FQCN for a resource, `pages_tab` for pages, `custom_permissions_tab`
+         * for the custom list. The values are permission *names*, not ids —
+         * CreateRole::afterCreate() firstOrCreate()s them.
+         *
+         * Ticking one of each on purpose. The custom tab is the repo-specific
+         * one: it only renders because `shield_resource.tabs.custom_permissions`
+         * is true, and without it Restore:Backup could never be granted through
+         * the panel at all.
+         */
         Livewire::test(CreateRole::class)
             ->fillForm([
-                'name' => 'Wali Kelas',
-                'permissions' => [$permission->getKey()],
+                'name' => 'wali-kelas',
+                'guard_name' => 'web',
+                ActivityResource::class => ['ViewAny:Activity'],
+                'custom_permissions_tab' => ['Restore:Backup'],
             ])
             ->call('create')
             ->assertHasNoFormErrors();
 
-        // The name is slugged so it stays usable as a stable identifier.
         $role = Role::where('name', 'wali-kelas')->firstOrFail();
 
         $this->assertSame('web', $role->guard_name);
-        $this->assertTrue($role->hasPermissionTo(PermissionEnum::LihatLogAktivitas->value));
+        $this->assertTrue($role->hasPermissionTo('ViewAny:Activity'));
+        $this->assertTrue($role->hasPermissionTo('Restore:Backup'));
     }
 
     public function test_the_super_admin_role_is_locked(): void
@@ -216,15 +223,28 @@ class AccessManagementUiTest extends TestCase
     // Permissions are a read-only catalogue
     // -----------------------------------------------------------------
 
-    public function test_permissions_cannot_be_created_or_edited_through_the_ui(): void
+    /**
+     * The read-only Izin resource is gone, and nothing replaced it: shield
+     * shows permissions only as checkboxes inside the role editor.
+     *
+     * The invariant it protected still holds and still matters. Every
+     * permission name is generated from a resource, page, widget or the custom
+     * list in config — each one referenced from a canAccess() or a can(). A
+     * permission typed into a CRUD screen would match no check at all, and
+     * deleting one would silently revoke access. So there must be no panel
+     * resource pointed at the permission model.
+     */
+    public function test_no_panel_resource_exposes_permissions_directly(): void
     {
         $this->admin();
-        $permission = Permission::findOrCreate(PermissionEnum::KelolaRole->value, 'web');
 
-        $this->assertFalse(PermissionResource::canCreate());
-        $this->assertFalse(PermissionResource::canEdit($permission));
-        $this->assertFalse(PermissionResource::canDelete($permission));
-        $this->assertSame(['index'], array_keys(PermissionResource::getPages()));
+        $resources = collect(Filament::getPanel('admin')->getResources());
+
+        $this->assertTrue(
+            $resources->every(fn (string $resource): bool => $resource::getModel() !== Permission::class),
+            'Sebuah resource panel menunjuk model Permission. Nama izin bukan data bebas — '.
+            'ia digenerate shield dan dirujuk dari canAccess()/can().',
+        );
     }
 
     // -----------------------------------------------------------------
@@ -317,6 +337,49 @@ class AccessManagementUiTest extends TestCase
      * The package must resolve the subclasses, otherwise role CRUD is written
      * by Spatie's own models and never reaches the log.
      */
+    /**
+     * The role editor is vendor code now, so the audit trail depends on
+     * shield's EditRole calling syncPermissions() on a model that fires
+     * spatie's events. Nothing in this repo would notice if a future version
+     * wrote the pivot rows directly instead -- the panel would keep working
+     * and authorization changes would simply stop being recorded.
+     *
+     * Also pins the shape of what lands in the log: syncPermissions revokes
+     * everything and re-grants the new set, so one save produces a
+     * `izin-dicabut` holding the *old* full set and a `izin-diberikan`
+     * holding the *new* full set -- not a delta. See CLAUDE.md.
+     */
+    public function test_editing_a_role_through_shield_reaches_the_audit_log(): void
+    {
+        $this->admin();
+        $this->seed(RolePermissionSeeder::class);
+
+        $role = Role::findOrCreate('guru', 'web');
+        Activity::query()->delete();
+
+        Livewire::test(EditRole::class, ['record' => $role->getKey()])
+            ->fillForm([
+                'name' => 'guru',
+                'guard_name' => 'web',
+                ActivityResource::class => ['ViewAny:Activity'],
+            ])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $events = Activity::query()->inLog('otorisasi')->orderBy('id')->get();
+
+        $this->assertSame(
+            ['izin-dicabut', 'izin-diberikan'],
+            $events->pluck('event')->all(),
+        );
+
+        $this->assertSame(['Access:AdminPanel'], $events->first()->getProperty('izin'));
+        $this->assertEqualsCanonicalizing(
+            ['Access:AdminPanel', 'ViewAny:Activity'],
+            $events->last()->getProperty('izin'),
+        );
+    }
+
     public function test_the_package_resolves_the_app_models(): void
     {
         $this->assertSame(Role::class, config('permission.models.role'));
@@ -336,7 +399,7 @@ class AccessManagementUiTest extends TestCase
 
         Activity::query()->delete();
 
-        $role->givePermissionTo(PermissionEnum::LihatLogAktivitas->value);
+        $role->givePermissionTo('ViewAny:Activity');
 
         $records = Activity::query()->inLog('otorisasi')->get();
 
@@ -344,6 +407,6 @@ class AccessManagementUiTest extends TestCase
 
         $activity = $records->first();
         $this->assertSame('izin-diberikan', $activity->event);
-        $this->assertSame([PermissionEnum::LihatLogAktivitas->value], $activity->getProperty('izin'));
+        $this->assertSame(['ViewAny:Activity'], $activity->getProperty('izin'));
     }
 }

@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Filament\Pages\Backups;
 use App\Jobs\RunBackup;
 use App\Models\User;
@@ -44,7 +43,7 @@ class BackupPageTest extends TestCase
     protected function admin(): User
     {
         $user = User::factory()
-            ->withPermissions([PermissionEnum::AksesPanelAdmin, PermissionEnum::KelolaBackup])
+            ->withPermissions(['Access:AdminPanel', 'View:Backups'])
             ->create();
 
         $this->actingAs($user);
@@ -60,7 +59,7 @@ class BackupPageTest extends TestCase
     public function test_panel_access_alone_does_not_open_the_backup_page(): void
     {
         $this->actingAs(
-            User::factory()->withPermissions([PermissionEnum::AksesPanelAdmin])->create(),
+            User::factory()->withPermissions(['Access:AdminPanel'])->create(),
         );
 
         $this->get(Backups::getUrl())->assertForbidden();

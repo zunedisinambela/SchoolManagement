@@ -12,7 +12,7 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Database | SQLite — `database/database.sqlite` |
 | Frontend | Vite |
 | Audit log | spatie/laravel-activitylog 5 |
-| Role & permission | spatie/laravel-permission 8 |
+| Role & permission | spatie/laravel-permission 8 + bezhansalleh/filament-shield 4 |
 | Backup | spatie/laravel-backup 10 |
 | WebSocket | laravel/reverb 1 + laravel-echo & pusher-js |
 | Gambar | intervention/image 4.2 lewat intervention/image-laravel 4.1 |
@@ -26,7 +26,7 @@ Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul ap
 
 Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, `backup_schedules`, dan `media`.
 
-Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/permissions`, `/admin/activities`, `/admin/backups`.
+Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/activities`, `/admin/backups`. (`/admin/permissions` sudah tidak ada — izin kini dicentang di dalam editor Role milik filament-shield.)
 
 ## Perintah
 
@@ -37,6 +37,8 @@ composer run setup    # install deps, generate key, migrate, build asset
 ./vendor/bin/pint     # format kode PHP
 php artisan reverb:start  # server WebSocket saja, tanpa sisa proses dev
 php artisan storage:link  # symlink public/storage, wajib sekali per instalasi
+php artisan shield:generate --all --panel=admin   # izin + policy dari isi panel
+php artisan shield:super-admin --user=1           # jadikan user tertentu super-admin
 php artisan media-library:clean --dry-run   # daftar berkas media yatim
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
@@ -66,9 +68,11 @@ app/Filament/Resources/Users/
 └── Tables/UsersTable.php     <- kolom, filter, aksi baris
 ```
 
-Resource read-only (Log Aktivitas, Izin) sengaja **tidak punya** `Pages/Create*`, `Pages/Edit*`, dan `Schemas/*Form.php` — filenya dihapus, bukan sekadar disembunyikan.
+Resource read-only (Log Aktivitas) sengaja **tidak punya** `Pages/Create*`, `Pages/Edit*`, dan `Schemas/*Form.php` — filenya dihapus, bukan sekadar disembunyikan.
 
-Navigasi dikelompokkan lewat `$navigationGroup`. Yang ada sekarang: grup **Manajemen Akses** (`$navigationSort` 10/20/30) dan Log Aktivitas tanpa grup (`$navigationSort` 90).
+**`app/Filament/Resources/Roles/` tidak mengikuti pola ini** dan memang tidak seharusnya. Isinya hasil `php artisan shield:publish` — form, tabel, dan halaman digabung dalam satu `RoleResource.php` sesuai bentuk stub Shield. Menyusun ulang ke pola repo akan hilang begitu `shield:publish` dijalankan lagi. Yang ditambahkan di sana cuma penguncian super-admin dan perbaikan hook halaman; lihat *Berkas hasil `shield:publish` bukan milikmu*.
+
+Navigasi dikelompokkan lewat `$navigationGroup`. Yang ada sekarang: grup **Manajemen Akses** (`$navigationSort` 10/20) dan Log Aktivitas tanpa grup (`$navigationSort` 90).
 
 **Asset panel di-gitignore.** `public/css/filament`, `public/js/filament`, `public/fonts/filament` adalah hasil generate, bukan source. Setelah `composer update` atau saat deploy **wajib** jalankan:
 
@@ -80,44 +84,88 @@ Kalau dilewat, panel tampil tanpa CSS.
 
 ### Akses panel
 
-`App\Models\User` implement `Filament\Models\Contracts\FilamentUser`. Yang menentukan akses adalah **permission** `akses-panel-admin`, bukan role. Tanpa itu → HTTP 403.
+`App\Models\User` implement `Filament\Models\Contracts\FilamentUser`. Yang menentukan akses adalah **permission** `Access:AdminPanel`, bukan role. Tanpa itu → HTTP 403.
 
 ```php
 public function canAccessPanel(Panel $panel): bool
 {
     return match ($panel->getId()) {
-        'admin' => $this->can(Permission::AksesPanelAdmin->value),
+        'admin' => $this->can('Access:AdminPanel'),
         default => false,
     };
 }
 ```
 
-Dua hal yang sengaja begini, jangan "disederhanakan":
+`Access:AdminPanel` adalah izin **kustom** — dideklarasikan di `custom_permissions` pada `config/filament-shield.php`, bukan digenerate dari sebuah resource, karena tidak ada model di balik "panel itu sendiri".
 
-- **Cek permission, bukan `hasRole('super-admin')`.** Ini yang membuat role `guru` dan `karyawan` bisa masuk panel hanya dengan diberi `akses-panel-admin`, tanpa menyentuh model User sama sekali.
+Tiga hal yang sengaja begini, jangan "disederhanakan":
+
+- **Cek permission, bukan `hasRole('super-admin')`.** Ini yang membuat role `guru` dan `karyawan` bisa masuk panel hanya dengan diberi `Access:AdminPanel`, tanpa menyentuh model User sama sekali.
+- **Role `panel_user` milik Shield dimatikan.** Kalau tidak, ia jadi jalur kedua ke dalam panel yang tidak muncul di pengecekan izin mana pun — lihat *`panel_user` dimatikan*.
 - **Cabang `default` = `false`.** Panel kedua (guru, siswa, wali murid) **tertutup sampai ditambahkan eksplisit** ke `match`, tidak diam-diam ikut aturan admin.
 
-## Otorisasi (spatie/laravel-permission)
+## Otorisasi (spatie/laravel-permission + filament-shield)
 
 Role dan permission disimpan di tabel `roles`, `permissions`, `model_has_roles`, `model_has_permissions`, `role_has_permissions`. Guard-nya `web`, sama dengan guard panel admin.
 
-Modelnya `App\Models\Role` dan `App\Models\Permission` — subclass model Spatie yang menambah pencatatan audit. **Jangan import dari `Spatie\Permission\Models\`**, penjelasannya di bagian Audit log.
+Modelnya `App\Models\Role` dan `App\Models\Permission` — subclass model Spatie yang menambah pencatatan audit. **Jangan import dari `Spatie\Permission\Models\`**, penjelasannya di bagian Audit log. Shield ikut memakai keduanya, karena ia meminta modelnya lewat `PermissionRegistrar` yang membaca `config/permission.php`.
 
-### Nama role & permission ada di enum
+### Nama izin digenerate, bukan ditulis
 
-Jangan tulis string mentah. Sumber kebenarannya:
+`bezhansalleh/filament-shield` menurunkan nama izin dari isi panel: tiap resource, page, dan widget. Dulu nama izin adalah case di `App\Enums\Permission` — enum itu **sudah dihapus**, karena daftar yang ditulis tangan pasti melenceng begitu ada resource baru.
 
-| File | Isi |
-|---|---|
-| `app/Enums/Role.php` | `Developer`, `SuperAdmin`, `Admin`, `Guru`, `Karyawan`, `Murid` |
-| `app/Enums/Permission.php` | `AksesPanelAdmin`, `LihatLogAktivitas`, `KelolaPengguna`, `KelolaRole`, `KelolaBackup`, `PulihkanBackup` |
-
-```php
-$user->can(Permission::LihatLogAktivitas->value);
-$user->assignRole(Role::SuperAdmin->value);
+```bash
+php artisan shield:generate --all --panel=admin   # bikin/perbarui izin + policy
+php artisan shield:generate --resource=SiswaResource --option=permissions
+php artisan shield:super-admin --user=1
 ```
 
-**Menambah permission baru = dua langkah.** Tambah case di enum, lalu jalankan `php artisan db:seed --class=RolePermissionSeeder`. Case enum tanpa baris di tabel `permissions` akan selalu `false`. Tes `test_every_enum_permission_is_seeded` menangkap kalau langkah kedua terlewat. Hal yang sama berlaku untuk role — tesnya `test_every_enum_role_is_seeded`.
+Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Lima belas izin yang ada sekarang:
+
+| Sumber | Izin |
+|---|---|
+| `UserResource` | `ViewAny:User`, `View:User`, `Create:User`, `Update:User`, `Delete:User` |
+| `RoleResource` | `ViewAny:Role`, `View:Role`, `Create:Role`, `Update:Role`, `Delete:Role` |
+| `ActivityResource` | `ViewAny:Activity`, `View:Activity` |
+| `Backups` (page) | `View:Backups` |
+| kustom | `Access:AdminPanel`, `Restore:Backup` |
+
+**Dua izin kustom, dan keduanya bukan kelalaian.** Tidak ada model di balik "panel itu sendiri" maupun di balik "memulihkan arsip", jadi keduanya dideklarasikan di `custom_permissions` pada config. Agar bisa dicentang lewat UI, `shield_resource.tabs.custom_permissions` harus `true` — bawaan paketnya `false`, dan dengan itu `Restore:Backup` tidak akan pernah bisa diberikan lewat panel.
+
+**Daftar method dipangkas per resource.** Bawaan Shield membuat 13 izin per resource, termasuk `Restore`, `ForceDelete`, `Replicate`, dan `Reorder` yang tidak punya tombol di panel ini. `resources.manage` di config memangkasnya — tapi hanya kalau **`policies.merge` `false`**. Dengan `true` (bawaan paket) daftar itu di-`array_merge` dengan daftar default, jadi ia menambah alih-alih mengganti. Tidak ada error; satu-satunya gejalanya jumlah izin yang tidak turun.
+
+**Menambah modul baru = jalankan generatornya**, lalu tentukan role mana yang mendapat izin barunya di `Role::permissions()`. Izin yang tidak pernah digenerate selalu `false`.
+
+### Policy hasil generate, dan siapa yang menang
+
+`shield:generate` juga menulis policy ke `app/Policies`. Isinya tipis — tiap method cuma menerjemahkan nama izin:
+
+```php
+public function delete(AuthUser $authUser, Role $role): bool
+{
+    return $authUser->can('Delete:Role');
+}
+```
+
+Yang ada sekarang: `UserPolicy`, `RolePolicy`, `ActivityPolicy`. Ketiganya **kode, bukan data** — masuk git, dan bukan urusan seeder (karena itu seedernya memakai `--option=permissions`).
+
+**Sekarang ada dua lapis otorisasi, dan yang di resource menang.** Filament menanyakan `can*()` statis di resource lebih dulu; kalau resource tidak mengoverride, barulah policy dipakai. Pembagiannya sekarang:
+
+| Resource | Lewat policy | Dioverride di resource |
+|---|---|---|
+| `RoleResource` | `canAccess` (`ViewAny:Role`) | `canEdit`, `canDelete`, `canDeleteAny` — penguncian super-admin |
+| `UserResource` | *(tidak ada)* | `canAccess`, `canDelete`, `canDeleteAny` — anti hapus diri & super-admin terakhir |
+| `ActivityResource` | *(tidak ada)* | semuanya — log audit read-only |
+
+**Ini jebakan yang menunggu.** `RolePolicy::delete()` mengizinkan siapa pun yang punya `Delete:Role` menghapus role apa pun — **termasuk `super-admin`**. Satu-satunya yang menahannya adalah override `canDelete()` di `RoleResource`. Menghapus override itu karena "kan sudah ada policy-nya" akan mengembalikan izin menghapus role yang memegang gate. Sama untuk `UserPolicy::delete()` versus larangan menghapus akun sendiri. Dikunci `test_the_super_admin_role_is_locked` dan `TableActionAuthorizationTest`.
+
+**`ActivityPolicy` tidak ditemukan otomatis.** Laravel mencocokkan policy lewat konvensi nama: `App\Models\Foo` → `App\Policies\FooPolicy`. Model Activity ada di paket activitylog, bukan di `App\Models`, jadi tidak ada yang menemukannya. Karena itu `AppServiceProvider::boot()` memanggil:
+
+```php
+FilamentShield::enforcePolicies();
+```
+
+`shield:generate` mencetak `(requires registration)` di sebelah policy yang butuh ini. Kalau nanti ada model paket lain yang dijadikan resource, gejalanya sama: policy-nya ada, isinya benar, dan tidak pernah dipanggil.
 
 ### Role yang ada dan izin bawaannya
 
@@ -125,16 +173,18 @@ $user->assignRole(Role::SuperAdmin->value);
 
 | Role | Izin bawaan | Catatan |
 |---|---|---|
-| `developer` | **semua** (`Permission::cases()`) | Eksplisit, bukan lewat gate — lihat di bawah |
-| `super-admin` | *tidak ada* | Lolos semua lewat `Gate::before` |
-| `admin` | `akses-panel-admin`, `kelola-pengguna`, `lihat-log-aktivitas` | Sengaja tanpa `kelola-role`, `kelola-backup`, dan `pulihkan-backup` |
-| `guru` | `akses-panel-admin` | Belum ada modul untuknya |
-| `karyawan` | `akses-panel-admin` | Belum ada modul untuknya |
+| `developer` | **semua** (dibaca dari tabel `permissions`) | Eksplisit, bukan lewat gate — lihat di bawah |
+| `super-admin` | *tidak ada* | Lolos semua lewat gate milik shield |
+| `admin` | `Access:AdminPanel`, kelima izin `:User`, `ViewAny:Activity`, `View:Activity` | Sengaja tanpa izin `:Role`, `View:Backups`, dan `Restore:Backup` |
+| `guru` | `Access:AdminPanel` | Belum ada modul untuknya |
+| `karyawan` | `Access:AdminPanel` | Belum ada modul untuknya |
 | `murid` | *tidak ada* | Tidak masuk panel admin |
 
-**`developer` bukan super-admin kedua.** Dia memegang tiap izin sebagai baris nyata di `role_has_permissions`, tidak lewat `Gate::before`. Bedanya baru terasa saat modul bertambah: policy modul baru **tetap berlaku** untuk developer, dan izin yang baru ditambahkan ke enum harus diberikan secara sadar (lewat seeder). Satu-satunya role yang melewati semuanya tetap `super-admin`. Tes `test_developer_holds_every_permission_without_bypassing_the_gate` mengunci perbedaan ini.
+**Nama izinnya string, dan itu risiko baru.** Sejak enum `Permission` dihapus, isi `Role::permissions()` tidak lagi diperiksa tipe. Salah ketik, atau izin yang berubah nama karena `shield:generate` berikutnya, tidak menghasilkan error — ia cuma memberi izin yang tidak cocok dengan pengecekan mana pun. `test_every_baseline_permission_exists` menutup celah itu dengan mencocokkan tiap string ke baris yang benar-benar digenerate.
 
-**`admin` sengaja tidak dapat `kelola-role`.** Siapa pun yang memegangnya bisa membuat role berisi izin apa pun lalu memberikannya ke dirinya sendiri — praktis setara developer. `kelola-backup` juga ditahan karena berjarak satu klik dari mengunduh seluruh isi database, dan `pulihkan-backup` karena ia mengganti tabel `users` dengan versi arsip — lihat *Restore*.
+**`developer` bukan super-admin kedua.** Dia memegang tiap izin sebagai baris nyata di `role_has_permissions`, tidak lewat gate. Bedanya baru terasa saat modul bertambah: policy modul baru **tetap berlaku** untuk developer. Daftarnya dibaca dari tabel (`Role::allGeneratedPermissions()`), bukan dari literal, supaya izin hasil `shield:generate` berikutnya ikut tanpa menyunting enum. Satu-satunya role yang melewati semuanya tetap `super-admin`. Dikunci `test_developer_holds_every_permission_without_bypassing_the_gate`.
+
+**`admin` sengaja tidak dapat izin `:Role`.** Siapa pun yang memegangnya bisa membuat role berisi izin apa pun lalu memberikannya ke dirinya sendiri — praktis setara developer. `View:Backups` juga ditahan karena berjarak satu klik dari mengunduh seluruh isi database, dan `Restore:Backup` karena ia mengganti tabel `users` dengan versi arsip — lihat *Restore*.
 
 **Seeder menambah, tidak pernah sync.** `givePermissionTo` dipakai, bukan `syncPermissions`. Ini disengaja: langkah 6 checklist deploy menjalankan seeder ini di **setiap** rilis, dan sync akan diam-diam membatalkan setiap perubahan izin yang dibuat lewat panel sejak deploy terakhir. Konsekuensinya, menghapus izin dari `permissions()` **tidak** mencabutnya di instalasi yang sudah jalan — itu harus dilakukan manual lewat panel. Dikunci `test_reseeding_does_not_revoke_a_permission_granted_by_hand`.
 
@@ -142,15 +192,43 @@ Role selain `super-admin` **tidak dikunci** dari edit/hapus di panel. Namanya ti
 
 ### super-admin
 
-Role `super-admin` **tidak memegang permission apa pun secara eksplisit**. Dia lolos semua pengecekan lewat `Gate::before` di `AppServiceProvider`:
+Role `super-admin` **tidak memegang permission apa pun secara eksplisit**. Dia lolos semua pengecekan lewat gate. `Gate::before` di `AppServiceProvider` **sudah dihapus** — sekarang shield yang memasangnya, dari `FilamentShieldServiceProvider`:
 
 ```php
-Gate::before(fn (User $user) => $user->hasRole(Role::SuperAdmin->value) ? true : null);
+Gate::before(fn ($user, $ability) => $user->hasRole(Utils::getSuperAdminName()) ? true : null);
 ```
 
-Wajib `null`, bukan `false`, untuk user non-super-admin. `false` akan menghentikan gate lebih awal dan menolak permission yang sebenarnya dimiliki user itu.
+Wajib `null`, bukan `false`, untuk user non-super-admin. `false` akan menghentikan gate lebih awal dan menolak permission yang sebenarnya dimiliki user itu. Sifat itu terbawa dari implementasi lama dan tetap berlaku — `intercept_gate => 'after'` di config justru mengembalikan `false` dan punya bug itu secara bawaan.
+
+Tiga baris config yang menentukan semuanya, dan **dua di antaranya berbeda dari bawaan paket**:
+
+| Key | Repo ini | Bawaan Shield | Kalau dibiarkan bawaan |
+|---|---|---|---|
+| `super_admin.name` | `super-admin` | `super_admin` | Role kedua yang kosong; pemegang role lama kehilangan bypass |
+| `super_admin.define_via_gate` | `true` | `false` | Shield **tidak memasang gate sama sekali** dan malah memberi super-admin tiap izin sebagai baris — persis peran `developer`, jadi kedua role itu kehilangan bedanya |
+| `super_admin.intercept_gate` | `before` | `before` | — |
+
+Yang kedua paling halus: dengan `false` semuanya tetap tampak jalan, sampai ada modul baru yang izinnya belum digenerate ulang dan super-admin diam-diam tidak bisa membukanya. Dikunci `test_shield_grants_super_admin_through_the_gate`.
+
+Nama role juga hidup di dua tempat — `App\Enums\Role::SuperAdmin` dan config shield. Seeder dan migrasi `is_admin` membaca enum, gate membaca config. Kalau melenceng, role yang di-seed dan role yang punya bypass jadi dua baris berbeda. Dikunci `test_the_super_admin_name_matches_shield`.
 
 Konsekuensinya: jangan pernah memberi `super-admin` ke user biasa. Role itu melewati **semua** policy, bukan cuma permission yang terdaftar.
+
+### `panel_user` dimatikan
+
+Shield membuat role `panel_user` secara bawaan untuk "pengguna yang boleh masuk panel tanpa izin khusus". Di repo ini `panel_user.enabled` disetel `false`.
+
+Alasannya sama dengan alasan `canAccessPanel()` mengecek izin dan bukan role: role itu akan jadi **jalur kedua ke dalam panel yang tidak muncul di pengecekan izin mana pun**. Seseorang memberikannya karena namanya terdengar tidak berbahaya, lalu tidak ada `can()` di kode yang menjelaskan kenapa akun itu bisa masuk. Dikunci `test_the_shield_panel_user_role_is_disabled`.
+
+### Berkas hasil `shield:publish` bukan milikmu
+
+`app/Filament/Resources/Roles/` adalah salinan resource milik Shield, dihasilkan `php artisan shield:publish`. Perintah itu **menimpa tanpa bertanya**. Dua hal yang ditambahkan di sana akan hilang kalau ia dijalankan ulang:
+
+**1. Hook halaman salah nama di stub aslinya.** `ListRoles`, `EditRole`, dan `ViewRole` bawaan Shield mendefinisikan `getActions()` — hook Filament versi lama. Filament 5 memanggil `getHeaderActions()`. Akibatnya tombol **Buat**, **Hapus**, dan **Ubah** di header halaman **tidak dirender sama sekali**: bukan error, bukan 403, cuma halaman tanpa aksi. Ketiganya sudah diganti namanya di repo ini, dan `test_the_role_pages_still_render_their_header_actions` menangkap kalau ia kembali.
+
+**2. Penguncian super-admin dan bulk delete.** Shield tidak membawa keduanya. `canEdit()`, `canDelete()`, `canDeleteAny()`, `isSuperAdmin()`, `->disabled()` pada tiap action, dan `toolbarActions([])` semuanya tambahan repo ini. Stub aslinya memasang `DeleteBulkAction` yang akan melewati penguncian itu — lihat *Action Filament TIDAK ikut `canEdit()`/`canDelete()`*.
+
+Kalau `shield:publish` memang perlu dijalankan lagi (misalnya setelah upgrade paket), jalankan `composer run test` sesudahnya. Tesnya menangkap kedua regresi di atas.
 
 ### UI di panel admin
 
@@ -158,16 +236,19 @@ Grup navigasi **Manajemen Akses**:
 
 | Menu | URL | Izin | Sifat |
 |---|---|---|---|
-| Pengguna | `/admin/users` | `kelola-pengguna` | CRUD + centang role |
-| Role | `/admin/roles` | `kelola-role` | CRUD + centang izin |
-| Izin | `/admin/permissions` | `kelola-role` | **read-only** |
+| Pengguna | `/admin/users` | `ViewAny:User` | CRUD + centang role |
+| Role | `/admin/roles` | `ViewAny:Role` (lewat `RolePolicy`) | Resource milik Shield, izin dicentang per tab |
 
-Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `lihat-log-aktivitas`, read-only) dan **Backup** (`/admin/backups`, izin `kelola-backup`, plus `pulihkan-backup` khusus untuk tombol Pulihkan) — lihat bagian *Audit log* dan *Backup*.
+Menu **Izin** sudah tidak ada. Shield tidak punya resource untuk permission — daftarnya muncul sebagai checkbox bertab di dalam editor Role, dikelompokkan per resource/page/widget/kustom. Efeknya sama dengan resource read-only yang dulu ada, dengan cara yang lebih baik: izin tidak bisa dibuat maupun dihapus lewat UI sama sekali. Dijaga `test_no_panel_resource_exposes_permissions_directly`.
+
+URL-nya sengaja tetap `/admin/roles`. Bawaan Shield `/admin/shield/roles`; diubah lewat `shield_resource.slug` supaya tautan lama tidak patah.
+
+Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `ViewAny:Activity`, read-only) dan **Backup** (`/admin/backups`, izin `View:Backups`, plus `Restore:Backup` khusus untuk tombol Pulihkan) — lihat bagian *Audit log* dan *Backup*.
 
 Pengaman yang sengaja dipasang — jangan dilonggarkan tanpa alasan:
 
-- **Izin read-only.** Nama izin bukan data bebas; tiap nama adalah case di `App\Enums\Permission` dan dirujuk dari `canAccess()` atau `can()`. Izin yang dibuat lewat UI tidak cocok dengan pengecekan mana pun, dan menghapus izin diam-diam mencabut akses. Keduanya perubahan kode, tempatnya di enum + seeder.
-- **Role `super-admin` terkunci** dari edit dan hapus. Namanya dirujuk dari `App\Enums\Role`, dari `Gate::before`, dan dari sebuah migrasi. Daftar izinnya juga tidak berarti karena gate memberi semuanya.
+- **Nama izin bukan data bebas.** Tiap nama digenerate Shield dari isi panel dan dirujuk dari `canAccess()` atau `can()`. Izin yang lahir di luar generator tidak cocok dengan pengecekan mana pun, dan menghapus izin diam-diam mencabut akses.
+- **Role `super-admin` terkunci** dari edit dan hapus. Namanya dirujuk dari `App\Enums\Role`, dari config shield, dari gate yang dipasang shield, dan dari sebuah migrasi. Daftar izinnya juga tidak berarti karena gate memberi semuanya. **Pengaman ini tidak dibawa Shield** — ia diporting ke `RoleResource` hasil `shield:publish`, dan `shield:publish` yang dijalankan ulang akan menimpanya.
 - **Super-admin terakhir tidak bisa dilepas rolenya**, baik lewat form edit maupun tombol hapus. Tanpa ini, admin bisa mencabut role dari satu-satunya akun yang punya — termasuk akunnya sendiri — dan mengunci semua orang, karena tidak ada jalur lain di panel untuk mengembalikannya.
 - **Tidak bisa menghapus akun sendiri.**
 - **Bulk delete dimatikan** di Pengguna dan Role. Filament tidak menjalankan `canDelete()` per baris saat bulk, jadi pengaman di atas akan terlewat.
@@ -209,8 +290,8 @@ php artisan permission:cache-reset
 
 Dua batasan yang berbeda, jangan tertukar:
 
-- **Izin tidak boleh lahir dari CLI.** Jangan pakai `permission:create-permission` — tiap nama izin adalah case di `App\Enums\Permission` dan dirujuk dari `canAccess()` atau `can()`. Izin yang tidak ada di enum tidak cocok dengan pengecekan mana pun.
-- **Role tambahan boleh.** Enam role di enum adalah bawaan, bukan daftar tertutup. Role tambahan seperti `wali-kelas` sah dibuat lewat CLI atau panel — yang penting izin yang dicentang ke dalamnya sudah ada di enum. Yang perlu diingat: role di luar enum tidak dibuat ulang oleh seeder, jadi kalau terhapus ia hilang beserta penugasannya.
+- **Izin tidak boleh lahir dari CLI.** Jangan pakai `permission:create-permission` — nama izin digenerate `shield:generate` dari isi panel dan dirujuk dari `canAccess()` atau `can()`. Izin yang dibuat manual tidak cocok dengan pengecekan mana pun. Kalau butuh izin yang tidak punya resource di baliknya, tempatnya `custom_permissions` di `config/filament-shield.php`, lalu generate ulang.
+- **Role tambahan boleh.** Enam role di enum adalah bawaan, bukan daftar tertutup. Role tambahan seperti `wali-kelas` sah dibuat lewat CLI atau panel. Yang perlu diingat: role di luar enum tidak dibuat ulang oleh seeder, jadi kalau terhapus ia hilang beserta penugasannya.
 
 ### Kolom `is_admin` sudah tidak ada
 
@@ -229,6 +310,10 @@ Dulu akses panel ditentukan kolom boolean `users.is_admin`. Migrasi `2026_08_09_
 Hanya user itu yang dibuat. Lima role lainnya lahir tanpa pemegang — penugasannya lewat menu **Pengguna** di panel.
 
 Urutannya penting: `RolePermissionSeeder` membuat role dan permission, baru `AdminUserSeeder` memberikan rolenya. Keduanya idempoten (`findOrCreate` / `updateOrCreate` / `givePermissionTo`), aman dijalankan berulang tanpa `migrate:fresh`.
+
+**`RolePermissionSeeder` memanggil `shield:generate`.** Izin tidak lagi ditulis di seeder — ia memanggil generator Shield lewat `Artisan::call`, lalu membagikannya ke role sesuai `Role::permissions()`. Ini yang membuat `migrate:fresh --seed` tetap cukup dengan satu perintah.
+
+Argumen `--option=permissions` bukan hiasan: tanpa itu generator juga **menulis ulang berkas policy** ke `app/Policies`. Policy adalah kode, tempatnya di git, dan seeder yang menulis berkas PHP akan gagal di deploy yang filesystem-nya read-only. Yang dijalankan seeder hanya bagian datanya.
 
 **Kredensial dev saja.** Jangan pernah jalankan `AdminUserSeeder` di produksi. `RolePermissionSeeder` aman — isinya cuma role dan permission, tanpa user.
 
@@ -272,6 +357,23 @@ Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. K
 **Selalu import `App\Models\Role`, jangan `Spatie\Permission\Models\Role`.** Class Spatie tetap berfungsi dan menulis baris ke tabel yang sama, tapi tanpa jejak audit. Ada tes `test_the_package_resolves_the_app_models` yang mengunci konfigurasinya.
 
 Hati-hati tabrakan nama: `App\Enums\Role` menyimpan *nama* role, `App\Models\Role` adalah modelnya. Di file yang butuh keduanya, beri alias — konvensi di repo ini `use App\Enums\Role as RoleEnum`.
+
+Shield ikut memakai model ini: ia meminta class-nya lewat `PermissionRegistrar`, yang membaca config yang sama. Jadi role yang dibuat lewat panel tetap tercatat.
+
+#### Editor Role milik Shield mencatat set penuh, bukan selisih
+
+`EditRole::afterSave()` bawaan Shield memanggil `syncPermissions()`. Sync artinya **cabut semua, lalu berikan set yang baru** — termasuk izin yang sebenarnya tidak berubah.
+
+Satu kali simpan karena itu menghasilkan **dua** baris di `activity_log`:
+
+| Event | Isi `izin` |
+|---|---|
+| `izin-dicabut` | seluruh izin **lama** |
+| `izin-diberikan` | seluruh izin **baru** |
+
+Menambahkan satu centang ke role `guru` menghasilkan `izin-dicabut: ["Access:AdminPanel"]` disusul `izin-diberikan: ["Access:AdminPanel","ViewAny:Activity"]`. Membaca baris pertama sendirian akan terbaca seperti pencabutan akses yang tidak pernah terjadi — **selalu baca berpasangan**.
+
+Ini juga berarti jejak auditnya bergantung pada kode vendor. Kalau versi Shield berikutnya menulis pivot langsung ketimbang lewat model, panelnya tetap jalan dan perubahan otorisasi diam-diam berhenti tercatat. Dikunci `test_editing_a_role_through_shield_reaches_the_audit_log`.
 
 ### Nama method listener wajib `recordX`, jangan `handleX`
 
@@ -319,7 +421,7 @@ Bentuk data per event, berguna saat menulis tes:
 
 `app/Filament/Resources/Activities/` sengaja tidak punya page `create`/`edit`, dan `canCreate()`/`canEdit()`/`canDelete()` semuanya `false`. Audit trail yang bisa disunting tidak ada gunanya — jangan dibuka.
 
-Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas`. Terpisah dari `akses-panel-admin`, jadi user bisa dimasukkan ke panel tanpa sekalian diberi jejak audit.
+Akses dibatasi lewat `canAccess()` yang mengecek permission `ViewAny:Activity`. Terpisah dari `Access:AdminPanel`, jadi user bisa dimasukkan ke panel tanpa sekalian diberi jejak audit.
 
 ### Pembersihan
 
@@ -335,9 +437,9 @@ Akses dibatasi lewat `canAccess()` yang mengecek permission `lihat-log-aktivitas
 
 ### UI di panel — `/admin/backups`
 
-Menu **Backup** (`$navigationSort` 80, tanpa grup, bertetangga dengan Log Aktivitas). Izinnya `kelola-backup`, **terpisah dari `akses-panel-admin`** — halaman ini memperlihatkan kapan database terakhir ditangkap dan berjarak satu klik dari menyerahkan seluruh isinya, jadi tidak ikut terbawa hanya karena seseorang boleh masuk panel.
+Menu **Backup** (`$navigationSort` 80, tanpa grup, bertetangga dengan Log Aktivitas). Izinnya `View:Backups`, **terpisah dari `Access:AdminPanel`** — halaman ini memperlihatkan kapan database terakhir ditangkap dan berjarak satu klik dari menyerahkan seluruh isinya, jadi tidak ikut terbawa hanya karena seseorang boleh masuk panel.
 
-Satu aksi di halaman ini dijaga izin **kedua**: tombol **Pulihkan** butuh `pulihkan-backup`. Pemegang `kelola-backup` melihat halamannya tanpa tombol itu. Alasannya di bagian *Restore*.
+Satu aksi di halaman ini dijaga izin **kedua**: tombol **Pulihkan** butuh `Restore:Backup`. Pemegang `View:Backups` melihat halamannya tanpa tombol itu. Alasannya di bagian *Restore*.
 
 Isinya: ringkasan status di subheading (jumlah arsip, total ukuran, umur arsip terbaru), tabel arsip, dan tiga aksi.
 
@@ -348,7 +450,7 @@ Isinya: ringkasan status di subheading (jumlah arsip, total ukuran, umur arsip t
 | **Backup Sekarang** | Dispatch `App\Jobs\RunBackup` ke queue, bukan dijalankan di request |
 | **Unduh** | Streaming download, dicatat ke `activity_log` |
 | **Hapus** | Konfirmasi wajib, arsip terbaru dikunci, dicatat ke `activity_log` |
-| **Pulihkan** | Izin terpisah `pulihkan-backup`, konfirmasi ketik nama berkas, lihat *Restore* |
+| **Pulihkan** | Izin terpisah `Restore:Backup`, konfirmasi ketik nama berkas, lihat *Restore* |
 
 **Bukan Resource, melainkan `Filament\Pages\Page`.** Backup itu berkas di disk, bukan record Eloquent — tidak ada model, tidak ada id, tidak ada yang bisa di-query. Tabelnya diisi lewat `->records()`, bukan `->query()`, sehingga tiap baris sampai ke closure sebagai **array biasa, bukan Model**. Semua closure di halaman itu karena itu bertipe `array $record`.
 
@@ -476,7 +578,7 @@ Melewatkan salah satunya = separuh arsip terkunci password berbeda, dan itu baru
 
 Cara kerjanya menumpang perilaku paketnya: spatie mengikat `Config::class` dengan `$app->scoped()` yang membaca `config('backup')` secara lazy, jadi `config(['backup.backup.password' => ...])` yang diset **sebelum** `backup:run` jalan sudah cukup — tidak perlu menyentuh paketnya.
 
-**Password tidak boleh masuk `activity_log`.** `LogsActivity` di `BackupSchedule` memakai `logFillable()`, yang akan menyalin nilainya mentah-mentah ke tabel yang bisa dibaca siapa pun pemegang `lihat-log-aktivitas` — kelompok yang jauh lebih luas daripada `kelola-backup`. Karena itu ada `->logExcept(['archive_password'])`, dan perubahannya dicatat manual di `Backups::savePassword()` sebagai event `password-arsip-diubah` **tanpa nilainya**. Dikunci `test_the_password_never_reaches_the_activity_log`.
+**Password tidak boleh masuk `activity_log`.** `LogsActivity` di `BackupSchedule` memakai `logFillable()`, yang akan menyalin nilainya mentah-mentah ke tabel yang bisa dibaca siapa pun pemegang `ViewAny:Activity` — kelompok yang jauh lebih luas daripada `View:Backups`. Karena itu ada `->logExcept(['archive_password'])`, dan perubahannya dicatat manual di `Backups::savePassword()` sebagai event `password-arsip-diubah` **tanpa nilainya**. Dikunci `test_the_password_never_reaches_the_activity_log`.
 
 Form-nya sengaja **memperlihatkan password yang sedang berlaku** (`revealable`, prefilled). Field write-only justru mengunci orang yang halaman ini dibuat untuknya: yang butuh membuka arsip tidak punya cara lain mengetahui kuncinya.
 
@@ -503,7 +605,7 @@ Isi arsip cuma dua, jadi restore juga dua hal: dump database dan `storage/app/pu
 
 #### Lewat panel — tombol Pulihkan
 
-Aksi baris **Pulihkan** di `/admin/backups`, dijalankan `App\Support\Backup\RestoreArchive`. Izinnya `pulihkan-backup`, **bukan** `kelola-backup`: restore mengganti tabel `users` dengan versi arsip, jadi pemegangnya bisa menghidupkan akun lama yang passwordnya ia tahu atau membatalkan pencabutan role. Itu kekuasaan lain dari "boleh mengunduh arsip".
+Aksi baris **Pulihkan** di `/admin/backups`, dijalankan `App\Support\Backup\RestoreArchive`. Izinnya `Restore:Backup`, **bukan** `View:Backups`: restore mengganti tabel `users` dengan versi arsip, jadi pemegangnya bisa menghidupkan akun lama yang passwordnya ia tahu atau membatalkan pencabutan role. Itu kekuasaan lain dari "boleh mengunduh arsip".
 
 Aksinya `->visible()` pada izin itu **dan** `abort_unless` di dalam `restore()`. Yang kedua bukan duplikasi: action Filament tidak punya otorisasi otomatis, jadi aksi yang bisa dipanggil namanya bisa dipanggil siapa saja — lihat *Action Filament TIDAK ikut canEdit()/canDelete()*. Konfirmasinya mengetik ulang **nama berkas**, bukan kata generik, karena itu satu-satunya konfirmasi yang juga menangkap klik di baris yang salah.
 
@@ -533,7 +635,7 @@ Pengaman lain, semuanya dikunci `BackupRestoreTest`:
 
 Setelah swap: `migrate --force` (arsip membawa tabel `migrations`-nya sendiri, jadi hanya migrasi yang lebih baru yang jalan) lalu `forgetCachedPermissions()`. Yang terakhir wajib — cache permission menyimpan **id**, dan id di database hasil restore berbeda.
 
-**Yang belum ditangani: `RestoreArchive` tidak menjalankan `RolePermissionSeeder`.** Migrasi mengembalikan struktur, bukan baris. Memulihkan arsip yang lebih tua dari case terbaru di `App\Enums\Permission` meninggalkan izin itu tanpa baris di tabel `permissions` — dan izin yang tidak ada di tabel selalu `false`, jadi menunya hilang diam-diam untuk semua orang kecuali `super-admin` yang lolos lewat `Gate::before`. Sudah terjadi saat memulihkan arsip 14:50 di repo ini. Sampai `settleApplication()` ikut memanggil seeder, **jalankan manual setelah restore lewat panel**:
+**Yang belum ditangani: `RestoreArchive` tidak menjalankan `RolePermissionSeeder`.** Migrasi mengembalikan struktur, bukan baris. Memulihkan arsip yang dibuat sebelum sebuah resource ada meninggalkan izin resource itu tanpa baris di tabel `permissions` — dan izin yang tidak ada di tabel selalu `false`, jadi menunya hilang diam-diam untuk semua orang kecuali `super-admin` yang lolos lewat gate. Sudah terjadi saat memulihkan arsip 14:50 di repo ini. Sampai `settleApplication()` ikut memanggil seeder, **jalankan manual setelah restore lewat panel**:
 
 ```bash
 php artisan db:seed --class=RolePermissionSeeder
@@ -587,7 +689,7 @@ Empat hal yang tidak kelihatan dari perintahnya:
 
 **`composer run dev` tidak perlu dimatikan.** Setelah `mv`, proses yang masih memegang file lama menulis ke inode yang sudah dilepas, bukan ke database baru. Tulisan itu hilang bersama filenya — yang justru diinginkan. Ini keuntungan langsung dari swap; jalur "kosongkan lalu impor" memang mengharuskan semuanya berhenti.
 
-**Restore memundurkan skema *dan* isi seeder** — dan keduanya butuh langkah berbeda. `migrate --force` mengembalikan strukturnya (arsip membawa tabel `migrations` sendiri, jadi hanya migrasi yang lebih baru yang jalan). Tapi migrasi tidak menambah **baris**: role dan permission yang lahir setelah arsip dibuat tetap hilang sampai `RolePermissionSeeder` dijalankan. Terjadi persis begitu saat memulihkan arsip 14:50 di repo ini — `pulihkan-backup` hilang, dan tombol Pulihkan mati untuk semua orang kecuali `super-admin` yang lolos lewat `Gate::before`.
+**Restore memundurkan skema *dan* isi seeder** — dan keduanya butuh langkah berbeda. `migrate --force` mengembalikan strukturnya (arsip membawa tabel `migrations` sendiri, jadi hanya migrasi yang lebih baru yang jalan). Tapi migrasi tidak menambah **baris**: role dan permission yang lahir setelah arsip dibuat tetap hilang sampai `RolePermissionSeeder` dijalankan. Terjadi persis begitu saat memulihkan arsip 14:50 di repo ini — `Restore:Backup` hilang, dan tombol Pulihkan mati untuk semua orang kecuali `super-admin` yang lolos lewat `Gate::before`.
 
 **`permission:cache-reset` bukan formalitas.** Cache permission Spatie menyimpan **id**, bukan nama, dan database hasil restore punya id yang lain. Cache basi adalah cara paling umum orang mengunci dirinya dari `/admin` padahal datanya utuh.
 
@@ -603,7 +705,7 @@ echo 'akses panel: '.var_export(\$u->canAccessPanel(Filament\Facades\Filament::g
 "
 ```
 
-Jumlah izin harus sama dengan jumlah case di `App\Enums\Permission`. Kalau kurang, langkah seeder terlewat.
+Jumlah izin harus sama dengan yang dihasilkan `shield:generate --all` untuk panel ini. Kalau kurang, langkah seeder terlewat.
 
 Gagal? `cp storage/app/pre-restore/manual-*.sqlite database/database.sqlite`.
 
@@ -702,12 +804,12 @@ Batas file descriptor juga ikut berlaku: tiap koneksi WebSocket = satu file desc
 `routes/channels.php` baru berisi channel bawaan `App.Models.User.{id}` yang cuma mencocokkan id. Channel apa pun yang menyiarkan data terbatas **wajib mengecek permission**, bukan sekadar "user login" — closure yang mengembalikan `true` polos membuat channel itu terbuka untuk semua akun.
 
 ```php
-Broadcast::channel('backup', fn (User $user) => $user->can(Permission::KelolaBackup->value));
+Broadcast::channel('backup', fn (User $user) => $user->can('View:Backups'));
 ```
 
-Pakai enum, jangan string mentah — aturannya sama dengan seluruh repo ini, lihat *Nama role & permission ada di enum*.
+Nama izinnya salin dari keluaran `shield:generate` — lihat *Nama izin digenerate, bukan ditulis*.
 
-**`super-admin` otomatis lolos** lewat `Gate::before`, karena `can()` melewati gate yang sama. Tidak perlu dikecualikan manual.
+**`super-admin` otomatis lolos** lewat gate yang dipasang shield, karena `can()` melewati gate yang sama. Tidak perlu dikecualikan manual.
 
 Closure ini dijalankan lewat route `POST /broadcasting/auth` yang didaftarkan otomatis oleh `withRouting(channels: ...)`. Route itu bermiddleware `web`, jadi otorisasinya bersandar pada **session yang sama dengan panel admin** — bukan token terpisah. Dua konsekuensi:
 
@@ -967,10 +1069,10 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | File | Yang dijaga |
 |---|---|
 | `AdminPanelAccessTest` | Siapa boleh membuka `/admin`, dan panel id asing tidak mewarisi aturan admin |
-| `RolePermissionTest` | Guard `web` cocok, `Gate::before` super-admin, developer tidak ikut bypass, tiap role dapat izin bawaannya dan tidak lebih, seeder idempoten & tidak mencabut, dan seeding lewat `DatabaseSeeder` benar-benar memberikan izinnya |
+| `RolePermissionTest` | Guard `web` cocok, gate super-admin, developer tidak ikut bypass, tiap role dapat izin bawaannya dan tidak lebih, tiap izin bawaan benar-benar ada, tiga baris config shield yang beda dari bawaan, seeder idempoten & tidak mencabut, dan seeding lewat `DatabaseSeeder` benar-benar memberikan izinnya |
 | `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
-| `AccessManagementUiTest` | Form pengguna & role, pengaman anti-terkunci, perubahan otorisasi masuk log |
-| `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false` |
+| `AccessManagementUiTest` | Form pengguna & role, centang izin di tab Shield (termasuk tab kustom), pengaman anti-terkunci, tidak ada resource yang membuka model Permission, perubahan otorisasi masuk log — termasuk yang lewat editor Role milik Shield |
+| `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false`; aksi header halaman Role masih dirender |
 | `BackupConfigurationTest` | Tujuan backup, `.env` tidak ikut terarsip, nama pantauan cocok, jadwal terdaftar |
 | `BackupPageTest` | Izin halaman backup, tombol unduh/hapus, arsip terbaru terlindungi, kunci baris palsu ditolak |
 | `BackupScheduleTest` | Default mingguan, cron tiap frekuensi, scheduler pakai jadwal user, tabel hilang tidak bikin crash, ambang monitor ikut frekuensi |
@@ -996,7 +1098,11 @@ Untuk gambar, prioritasnya sama-sama bukan bagian yang gampang: ukuran hasil res
 Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus karena terlihat sepele:
 
 - `assertCount(1, ...)` pada tes log: menangkap listener yang terdaftar dua kali (lihat bagian `recordX`).
-- `test_every_enum_permission_is_seeded` dan `test_every_enum_role_is_seeded`: menangkap case enum yang lupa di-seed.
+- `test_every_baseline_permission_exists`: menangkap string izin di `Role::permissions()` yang tidak cocok dengan apa pun yang digenerate Shield. Sejak enum `Permission` dihapus, nama izin tidak lagi diperiksa tipe — salah ketik memberi izin yang tidak menjaga apa pun, tanpa error. `test_every_enum_role_is_seeded` menjaga hal yang sama untuk role.
+- `test_the_super_admin_name_matches_shield`, `test_shield_grants_super_admin_through_the_gate`, dan `test_the_shield_panel_user_role_is_disabled`: mengunci tiga baris `config/filament-shield.php` yang **berbeda dari bawaan paket**. Kembali ke bawaan tidak menimbulkan error apa pun — yang berubah cuma siapa yang bisa apa.
+- `test_no_panel_resource_exposes_permissions_directly`: pengganti tes resource Izin read-only yang lama. Menjaga tidak ada resource panel yang menunjuk model Permission.
+- `test_the_role_pages_still_render_their_header_actions`: menangkap `shield:publish` yang dijalankan ulang dan mengembalikan hook `getActions()`, yang membuat tombol di header halaman Role diam-diam berhenti dirender.
+- `test_editing_a_role_through_shield_reaches_the_audit_log`: editor Role sekarang kode vendor. Kalau versi Shield berikutnya menulis pivot langsung ketimbang lewat model, panelnya tetap jalan dan perubahan otorisasi berhenti tercatat tanpa gejala apa pun.
 - `test_each_role_receives_its_baseline_permissions_and_no_more`: memeriksa **dua arah**. Menguji grantnya saja akan meloloskan role yang kelebihan izin, dan itu justru kegagalan yang penting.
 - `test_reseeding_does_not_revoke_a_permission_granted_by_hand`: menangkap seeder yang diubah jadi `syncPermissions`, yang akan membuat tiap deploy membatalkan penyesuaian izin lewat panel.
 - `test_seeding_through_the_database_seeder_grants_role_permissions`: satu-satunya tes yang memanggil `$this->seed()` tanpa argumen, jadi satu-satunya yang melewati `WithoutModelEvents` milik `DatabaseSeeder` — jalur yang sebenarnya dipakai `migrate:fresh --seed`. Assert-nya sengaja pada **grant**, bukan `Permission::count()`: barisnya tetap tertulis walau bug-nya kambuh, jadi menghitung baris akan hijau sepanjang kegagalan. Role yang diuji `guru`, bukan `super-admin`, karena yang terakhir lolos lewat `Gate::before` dan akan hijau apa pun keadaan cachenya. Latar belakangnya di bagian *`DatabaseSeeder` membungkam model event*.
@@ -1018,10 +1124,10 @@ Factory `UserFactory` punya dua state untuk menyiapkan hak akses:
 
 ```php
 User::factory()->superAdmin()->create();
-User::factory()->withPermissions([Permission::AksesPanelAdmin])->create();
+User::factory()->withPermissions(['Access:AdminPanel', 'ViewAny:User'])->create();
 ```
 
-Keduanya membuat role/permission-nya sendiri kalau seeder belum jalan.
+Keduanya membuat role/permission-nya sendiri kalau seeder belum jalan. Konsekuensinya `withPermissions()` **tidak** memvalidasi namanya: salah ketik menghasilkan user yang memegang izin yang tidak dicek siapa pun, dan tesnya lolos karena alasan yang salah. Uji perilakunya (halaman render / 403), jangan grantnya.
 
 ## Menambah modul baru
 
@@ -1036,20 +1142,16 @@ php artisan migrate
 
 **2. Pasang audit log** di modelnya — lihat bagian *Menambah model baru ke audit log*. Kalau ada kolom sensitif (NIK, nomor HP wali), tambahkan `->logExcept([...])`.
 
-**3. Tambah permission** ke `app/Enums/Permission.php`, lalu seed:
-
-```php
-case LihatSiswa = 'lihat-siswa';
-case KelolaSiswa = 'kelola-siswa';
-```
+**3. Generate permission**-nya dari resource yang baru dibuat (jalankan setelah langkah 4 kalau resourcenya belum ada), lalu seed:
 
 ```bash
+php artisan shield:generate --resource=SiswaResource --panel=admin
 php artisan db:seed --class=RolePermissionSeeder
 ```
 
-Jangan lewat, case enum tanpa baris di tabel `permissions` **selalu** `false`.
+Jangan lewat, izin yang tidak punya baris di tabel `permissions` **selalu** `false`.
 
-Lalu tentukan role mana yang mendapatkannya di `Role::permissions()`. `developer` otomatis ikut (`Permission::cases()`), sisanya tidak — role `guru` tidak akan bisa melihat modul guru sampai izinnya ditambahkan ke sana.
+Lalu tentukan role mana yang mendapatkannya di `Role::permissions()`. `developer` otomatis ikut (daftarnya dibaca dari tabel), sisanya tidak — role `guru` tidak akan bisa melihat modul guru sampai izinnya ditambahkan ke sana. Namanya string, jadi salinlah dari keluaran `shield:generate`; `test_every_baseline_permission_exists` akan merah kalau salah ketik.
 
 **4. Buat resource Filament**
 
@@ -1062,7 +1164,7 @@ php artisan make:filament-resource Siswa --generate --view
 ```php
 public static function canAccess(): bool
 {
-    return (bool) Filament::auth()->user()?->can(Permission::LihatSiswa->value);
+    return (bool) Filament::auth()->user()?->can('ViewAny:Siswa');
 }
 ```
 
@@ -1171,7 +1273,7 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 3. `npm run build`
 4. `php artisan migrate --force`
 5. Pastikan `APP_DEBUG=false` dan `DEBUGBAR_ENABLED` tidak `true`.
-6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini tidak membuat user, jadi aman di produksi. Aman juga diulang tiap rilis: ia menambah, tidak pernah mencabut, jadi penyesuaian izin yang dibuat lewat panel tetap utuh.
+6. `php artisan db:seed --class=RolePermissionSeeder` — role dan permission harus ada, kalau tidak semua pengecekan akses `false` dan tidak ada yang bisa masuk panel. Seeder ini memanggil `shield:generate` dalam mode data (`--option=permissions`), jadi resource yang baru ikut rilis ini langsung punya izinnya. Ia tidak membuat user, jadi aman di produksi, dan aman diulang tiap rilis: ia menambah, tidak pernah mencabut, sehingga penyesuaian izin yang dibuat lewat panel tetap utuh.
 7. **Jangan jalankan `db:seed` polos** — itu ikut menjalankan `AdminUserSeeder` yang memakai password `admin`. Buat akun produksi lewat `php artisan make:filament-user`, lalu `assignRole('super-admin')` manual. Tanpa role, akun barunya kena 403.
 8. Pastikan cron scheduler aktif, kalau tidak `activitylog:clean` dan seluruh perintah backup tidak pernah jalan — `activity_log` tumbuh tanpa batas dan tidak ada arsip yang pernah dibuat.
 9. `sudo apt install sqlite3` — `backup:run` **dan** tombol Pulihkan sama-sama butuh binernya, ekstensi PHP saja tidak cukup.
@@ -1179,7 +1281,7 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 11. Setel SMTP sungguhan. Dengan `MAIL_MAILER=log`, notifikasi backup gagal hanya masuk file log dan tidak dibaca siapa pun.
 12. Jalankan `php artisan backup:run` sekali secara manual, lalu `php artisan backup:list`. Kegagalan PATH `sqlite3` paling enak ketahuan sekarang, bukan jam 01:30 saat tidak ada yang melihat.
 13. Tambahkan disk luar (S3/rsync) ke `backup.destination.disks`. Arsip yang hanya duduk di disk yang sama dengan aplikasinya tidak menolong saat disknya yang mati.
-14. Jangan berikan `pulihkan-backup` ke siapa pun secara default. Pemegangnya bisa mengganti tabel `users` dengan versi arsip — lihat *Restore*. Berikan saat dibutuhkan, cabut setelahnya.
+14. Jangan berikan `Restore:Backup` ke siapa pun secara default. Pemegangnya bisa mengganti tabel `users` dengan versi arsip — lihat *Restore*. Berikan saat dibutuhkan, cabut setelahnya.
 15. Uji restore-nya **sekali** ke instalasi lain sebelum mempercayainya. Backup yang belum pernah dipulihkan belum terbukti backup. Ingat menjalankan `db:seed --class=RolePermissionSeeder` sesudahnya — lihat *Restore*.
 16. Setel `VITE_REVERB_HOST` ke domain publik dan `VITE_REVERB_SCHEME=https` **sebelum** langkah 3 — nilainya tertanam di bundel saat build, jadi mengubahnya sesudah `npm run build` tidak berpengaruh sampai di-build ulang. Biarkan `REVERB_HOST` sendiri menunjuk `127.0.0.1`; keduanya beda arah, lihat *Broadcasting*.
 17. Jalankan `reverb:start` di bawah supervisor (systemd/supervisord), bukan dari SSH. Ia proses yang harus terus hidup, sama seperti queue worker.
@@ -1232,13 +1334,15 @@ Output yang diharapkan:
 
 ```
 model-role: App\Models\Role
-izin: akses-panel-admin, kelola-backup, kelola-pengguna, kelola-role, lihat-log-aktivitas, pulihkan-backup
+izin: Access:AdminPanel, Create:Role, Create:User, Delete:Role, Delete:User, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:Role, View:User, ViewAny:Activity, ViewAny:Role, ViewAny:User
 role: admin, developer, guru, karyawan, murid, super-admin
 admin-role: super-admin
 akses-panel: true
 ```
 
 Kalau `model-role` menunjuk `Spatie\Permission\Models\Role`, perubahan role tidak masuk audit log — cek `config/permission.php`.
+
+Kalau daftar izinnya kosong atau kurang, `shield:generate` belum pernah jalan di instalasi itu — jalankan `php artisan db:seed --class=RolePermissionSeeder`, yang memanggilnya.
 
 ### Broadcasting
 

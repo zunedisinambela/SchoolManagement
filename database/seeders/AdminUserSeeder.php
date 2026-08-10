@@ -23,6 +23,6 @@ class AdminUserSeeder extends Seeder
             ],
         );
 
-        $admin->syncRoles([RoleEnum::SuperAdmin->value]);
+        $admin->syncRoles([RoleEnum::superAdminName()]);
     }
 }

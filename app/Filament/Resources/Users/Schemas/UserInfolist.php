@@ -2,12 +2,12 @@
 
 namespace App\Filament\Resources\Users\Schemas;
 
-use App\Enums\Permission as PermissionEnum;
 use App\Enums\Role as RoleEnum;
 use App\Models\User;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Str;
 
 class UserInfolist
 {
@@ -58,7 +58,10 @@ class UserInfolist
 
         return $record->getAllPermissions()
             ->pluck('name')
-            ->map(fn (string $name) => PermissionEnum::tryFrom($name)?->label() ?? $name)
+            // shield names permissions `ViewAny:User`. Readable enough in a
+            // role editor, unreadable in a sentence, so the colon becomes a
+            // space and the whole thing is headlined: "View Any User".
+            ->map(fn (string $name) => Str::headline(str_replace(':', ' ', $name)))
             ->sort()
             ->values()
             ->all();

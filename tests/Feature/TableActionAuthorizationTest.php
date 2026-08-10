@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Enums\Role as RoleEnum;
+use App\Filament\Resources\Roles\Pages\EditRole;
 use App\Filament\Resources\Roles\Pages\ListRoles;
+use App\Filament\Resources\Roles\Pages\ViewRole;
 use App\Filament\Resources\Users\Pages\ListUsers;
 use App\Models\Role;
 use App\Models\User;
@@ -124,5 +126,31 @@ class TableActionAuthorizationTest extends TestCase
         Livewire::test(ListRoles::class)
             ->assertTableActionEnabled('edit', $guru)
             ->assertTableActionEnabled('delete', $guru);
+    }
+
+    /**
+     * `shield:publish` writes the role pages' header actions as `getActions()`,
+     * a hook Filament 5 no longer calls, so the Delete and Edit buttons render
+     * nowhere at all -- no error, just a page with no actions. Re-running
+     * `shield:publish` silently reverts the rename.
+     *
+     * Asserted on an ordinary role on purpose. For super-admin these pages
+     * never open in the first place: canEdit() is false, so Filament aborts
+     * before any action exists. The `disabled()` guards on those buttons are
+     * therefore a second line behind a page guard that already holds -- kept
+     * because canEdit() is one edit away from being relaxed, but there is no
+     * state in which they can be exercised today, and a test pretending
+     * otherwise would assert nothing.
+     */
+    public function test_the_role_pages_still_render_their_header_actions(): void
+    {
+        $this->admin();
+        $guru = Role::findOrCreate('guru', 'web');
+
+        Livewire::test(EditRole::class, ['record' => $guru->getKey()])
+            ->assertActionVisible('delete');
+
+        Livewire::test(ViewRole::class, ['record' => $guru->getKey()])
+            ->assertActionVisible('edit');
     }
 }

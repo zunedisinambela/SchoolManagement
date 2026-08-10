@@ -2,10 +2,9 @@
 
 namespace App\Providers;
 
-use App\Enums\Role;
 use App\Listeners\LogAuthenticationActivity;
 use App\Listeners\LogAuthorizationChanges;
-use App\Models\User;
+use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Events\Failed;
@@ -53,9 +52,23 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(PermissionAttachedEvent::class, [LogAuthorizationChanges::class, 'recordPermissionAttached']);
         Event::listen(PermissionDetachedEvent::class, [LogAuthorizationChanges::class, 'recordPermissionDetached']);
 
-        // super-admin passes every ability check. Returning null rather than
-        // false for everyone else is required: false here would short-circuit
-        // the gate and deny permissions the user legitimately holds.
-        Gate::before(fn (User $user) => $user->hasRole(Role::SuperAdmin->value) ? true : null);
+        // The super-admin bypass used to live here as a Gate::before. It now
+        // belongs to filament-shield, which installs an equivalent hook driven
+        // by config `super_admin.intercept_gate`. Registering a second one
+        // here would run the same check twice on every ability call.
+        //
+        // The subtle part of the old implementation still applies to shield's:
+        // the callback must return null, not false, for everyone else —
+        // returning false short-circuits the gate and denies permissions the
+        // user legitimately holds. Locked by
+        // `test_a_non_super_admin_keeps_its_own_permissions`.
+
+        // Laravel discovers policies by naming convention: App\Models\Foo ->
+        // App\Policies\FooPolicy. ActivityPolicy breaks that convention
+        // because its model lives in the activitylog package, not in
+        // App\Models, so nothing would ever consult it. This registers the
+        // generated policies explicitly. `shield:generate` prints
+        // "requires registration" next to exactly the ones that need it.
+        FilamentShield::enforcePolicies();
     }
 }

@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Enums\BackupFrequency;
-use App\Enums\Permission as PermissionEnum;
 use App\Filament\Pages\Backups;
 use App\Models\BackupSchedule;
 use App\Models\User;
@@ -33,7 +32,7 @@ class BackupScheduleTest extends TestCase
     protected function admin(): User
     {
         $user = User::factory()
-            ->withPermissions([PermissionEnum::AksesPanelAdmin, PermissionEnum::KelolaBackup])
+            ->withPermissions(['Access:AdminPanel', 'View:Backups'])
             ->create();
 
         $this->actingAs($user);
