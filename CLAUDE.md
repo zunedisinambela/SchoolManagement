@@ -18,10 +18,11 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Gambar | intervention/image 4.2 lewat intervention/image-laravel 4.1 |
 | Media & unggahan | spatie/laravel-medialibrary 11 (membawa spatie/image 3) |
 | Spreadsheet | maatwebsite/excel 3.1 (membawa phpoffice/phpspreadsheet 1.30) |
+| PDF | barryvdh/laravel-dompdf 3.1 (membawa dompdf/dompdf 3.1) |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta empat fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, dan spreadsheet yang belum punya satu kelas export maupun import.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta lima fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, spreadsheet yang belum punya satu kelas export maupun import, dan PDF yang belum punya satu template.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
@@ -43,6 +44,7 @@ php artisan shield:super-admin --user=1           # jadikan user tertentu super-
 php artisan media-library:clean --dry-run   # daftar berkas media yatim
 php artisan make:export SiswaExport --model=Siswa   # kelas export spreadsheet
 php artisan make:import SiswaImport --model=Siswa   # kelas import spreadsheet
+php artisan vendor:publish --provider="Barryvdh\DomPDF\ServiceProvider"   # config/dompdf.php
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
 # restore: lewat tombol Pulihkan di /admin/backups, atau langkah CLI di bagian Restore
@@ -544,8 +546,13 @@ Urutan clean vs run tidak diikat: `DefaultStrategy` tidak pernah menghapus arsip
 | | Asset panel — hasil `filament:assets` |
 | | `public/build` — hasil `npm run build` |
 | | **`.env`** |
+| | **`storage/fonts`** — font kustom dompdf |
 
 Prinsipnya: hanya yang **tidak bisa dibuat ulang**. Sisanya lahir dari git + `composer install` + build.
+
+**`storage/fonts` adalah pengecualian yang melanggar prinsip itu, dan itu lubang yang nyata.** Font kustom yang didaftarkan ke sana **tidak ada di git** (isinya di-gitignore) dan **tidak ada di arsip backup** (`include` cuma `storage/app/public`). Ia satu-satunya direktori di repo ini yang tidak dipegang keduanya — hilang mesin berarti hilang fontnya, dan PDF hasil restore diam-diam jatuh ke font bawaan.
+
+Selama font bawaan cukup — dan untuk teks Indonesia yang seluruhnya Latin, cukup — ini tidak berdampak. Begitu ada font kustom yang benar-benar dipakai, pilih satu: ikutkan berkasnya ke git (paling sederhana, ukurannya kecil, dan lisensinya biasanya mengizinkan), atau tambahkan `storage/fonts` ke `backup.source.files.include`. Jangan biarkan ia hidup hanya di server produksi.
 
 **`.env` sengaja ada di `exclude`.** Isinya `APP_KEY` beserta semua kredensial, sementara arsip backup justru file yang paling mungkin disalin keluar server. Baris itu juga jaring pengaman kalau suatu saat `include` diperluas ke `base_path()` — jangan dihapus.
 
@@ -1100,23 +1107,19 @@ Bukan versi lama yang tertinggal — cabang `4.x-dev` ada di packagist tapi belu
 
 **2. Fitur baru phpspreadsheet tidak akan datang.** 1.x masih menerima perbaikan keamanan tapi bukan fitur. `composer audit` bersih saat dipasang; ulangi pemeriksaan itu berkala, karena satu-satunya jalan naik adalah menunggu laravel-excel 4.
 
-### Export PDF gagal keras — tidak ada driver terpasang
+### Export PDF sudah jalan — lewat pintu belakang
 
-`extension_detector.pdf` di config berisi `Excel::DOMPDF`, dan itu **hanya nama pilihan** — pustakanya tidak ikut terpasang. Ketiga kandidatnya (`dompdf/dompdf`, `mpdf/mpdf`, `tecnickcom/tcpdf`) tidak ada di `vendor/`.
+`extension_detector.pdf` berisi `Excel::DOMPDF`, dan sejak `barryvdh/laravel-dompdf` masuk, **pustakanya benar-benar ada**: paket itu menarik `dompdf/dompdf` sebagai dependensi, dan itulah satu-satunya yang dibutuhkan phpspreadsheet. Dulu `Excel::download($export, 'siswa.pdf')` melempar fatal `Error: Class "Dompdf\Dompdf" not found`; sekarang ia menghasilkan PDF.
 
-Akibatnya `Excel::download($export, 'siswa.pdf')` melempar **fatal `Error`, bukan exception yang bisa ditangkap dengan `catch (Exception)`**:
-
-```
-Error: Class "Dompdf\Dompdf" not found
+```php
+Excel::store(new SiswaExport, 'siswa.pdf', 'local', Excel::DOMPDF);
 ```
 
-Kalau nanti butuh PDF, pasang salah satunya dulu:
+**Yang menyambungkannya kebetulan, bukan sengaja.** laravel-excel tidak tahu-menahu soal barryvdh — ia cuma memanggil `new \Dompdf\Dompdf()`. Mencopot `barryvdh/laravel-dompdf` suatu saat akan mengembalikan fatal error di atas, tanpa ada yang menghubungkan kedua paket itu. Kalau PDF lewat laravel-excel benar-benar dipakai, `dompdf/dompdf` layak disebut sendiri di `composer.json` supaya tidak bergantung pada dependensi transitif.
 
-```bash
-composer require dompdf/dompdf
-```
+Kelas yang sama dengan `ext-gd` yang dipaksa phpspreadsheet — lihat *`composer install` tidak menjamin drivernya ada*.
 
-Baris `'pdf' => Excel::DOMPDF` sudah cocok dengan itu; ganti nilainya kalau memilih mPDF atau TCPDF. Jangan berasumsi PDF sudah bisa hanya karena tercantum di config.
+**`config/dompdf.php` TIDAK berlaku di jalur ini.** Rinciannya di *Dua jalur PDF, satu di antaranya buta terhadap config* — itu bagian yang paling mahal kalau dilewat.
 
 ### Cache sel `memory` — dan itu batas ukuran yang sebenarnya
 
@@ -1168,6 +1171,111 @@ Latar belakangnya di *Disk `public`, dan itu yang membuatnya ikut backup*.
 
 `imports.heading_row.formatter` bawaannya `slug`, jadi `WithHeadingRow` mengubah `Nama Lengkap` di berkas jadi kunci `nama_lengkap`. Berguna, tapi berarti **kunci array tidak sama persis dengan teks di spreadsheet** — dan berkas dari pengguna sungguhan membawa spasi ganda, huruf besar, serta tanda baca yang ikut ternormalisasi. Jangan mencocokkan kunci dengan menebak; `dd()` satu baris pertama saat menulis importernya.
 
+## PDF (barryvdh/laravel-dompdf)
+
+Render HTML jadi PDF di sisi server. Versi 3.1.2, membawa `dompdf/dompdf` 3.1.6. Belum ada satu pun template maupun rute yang memakainya — terpasang sebagai fondasi, sama seperti Reverb, intervention, dan laravel-excel.
+
+| Berkas | Isi |
+|---|---|
+| `config/dompdf.php` | Opsi dompdf: kertas, font, chroot, saklar remote/PHP |
+| `storage/fonts/` | Tempat font kustom didaftarkan. Isinya di-gitignore, direktorinya tidak |
+
+```php
+use Barryvdh\DomPDF\Facade\Pdf;
+
+return Pdf::loadView('rapor', ['siswa' => $siswa])->download('rapor.pdf');
+Pdf::loadHTML('<h1>Rapor</h1>')->setPaper('a4', 'landscape')->save(storage_path('app/public/r.pdf'));
+```
+
+Provider dan facade lewat auto-discovery — jangan daftarkan manual di `bootstrap/providers.php`. Config dipublish dengan:
+
+```bash
+php artisan vendor:publish --provider="Barryvdh\DomPDF\ServiceProvider"
+```
+
+### Dua jalur PDF, satu di antaranya buta terhadap config
+
+Jebakan paling mahal di bagian ini, dan tidak terlihat dari mana pun kecuali dengan membaca kode vendor. Repo ini sekarang punya **dua** cara menghasilkan PDF, dan keduanya memakai dompdf yang sama tapi **tidak** memakai konfigurasi yang sama.
+
+| Jalur | Pemanggil | Sumber opsi |
+|---|---|---|
+| `Pdf::loadView(...)` | facade barryvdh | `config/dompdf.php` |
+| `Excel::store($e, 'x.pdf', 'local', Excel::DOMPDF)` | phpspreadsheet | **default paket, bukan config** |
+
+Penyebabnya satu baris di `vendor/phpoffice/phpspreadsheet/src/PhpSpreadsheet/Writer/Pdf/Dompdf.php`:
+
+```php
+protected function createExternalWriterInstance()
+{
+    return new \Dompdf\Dompdf();   // tanpa argumen -> new Options() -> default paket
+}
+```
+
+phpspreadsheet tidak tahu Laravel ada. Akibatnya nilai yang benar-benar berlaku berbeda di kedua jalur:
+
+| Opsi | Jalur laravel-excel | Jalur facade |
+|---|---|---|
+| `chroot` | `vendor/dompdf/dompdf` | `base_path()` |
+| `font_dir` | `vendor/dompdf/dompdf/lib/fonts` | `storage/fonts` |
+| Kertas default | **letter** | **a4** |
+| `enable_remote` | `false` | `false` |
+
+Tiga konsekuensi praktis:
+
+- **Font kustom yang didaftarkan ke `storage/fonts` tidak terlihat oleh export laravel-excel.** Jalur itu hanya membaca font bawaan di `vendor/`.
+- **Mengeraskan `config/dompdf.php` demi keamanan hanya menutup separuh permukaan.** Jalur laravel-excel tetap memakai default paket apa pun isi config.
+- **Ukuran kertas tidak diambil dari config di kedua jalur untuk export spreadsheet** — phpspreadsheet memanggil `setPaper()` sendiri memakai `PageSetup` milik lembarnya, yang defaultnya `PAPERSIZE_LETTER` (`PageSetup.php:167`). Untuk dokumen sekolah Indonesia itu salah ukuran; setel eksplisit di kelas exportnya lewat `WithCustomStartCell`/`registerEvents` atau `$sheet->getPageSetup()->setPaperSize(PageSetup::PAPERSIZE_A4)`.
+
+Kalau suatu saat kedua jalur harus benar-benar seragam, satu-satunya cara bersih adalah subclass `Writer\Pdf\Dompdf` yang mengoper `new Options(config('dompdf.options'))`, lalu daftarkan lewat `IOFactory::registerWriter()`. Jangan menambal dengan `config()` di dalam template.
+
+### Opsi keamanan — bawaannya sudah benar, jangan dilonggarkan
+
+`config/dompdf.php` datang dengan dua saklar yang menentukan seberapa berbahaya PDF yang dirender dari input pengguna:
+
+| Key | Nilai | Kalau dinyalakan |
+|---|---|---|
+| `options.enable_php` | `false` | dompdf mengeksekusi `<script type="text/php">` di dalam HTML — **RCE penuh** kalau HTML-nya menyentuh input pengguna |
+| `options.enable_remote` | `false` | dompdf mengambil URL apa pun yang disebut `<img>`, `@import`, atau `<link>` — jalur SSRF dari sisi server |
+
+**`enable_php` tidak boleh `true`, titik.** Tidak ada kebutuhan template yang sepadan dengan itu.
+
+`enable_remote` lebih menggoda karena gejalanya menyebalkan: dengan `false`, gambar dan CSS dari URL **tidak dimuat dan tidak ada error apa pun** — PDF-nya jadi, isinya saja kehilangan logo. Kalau memang butuh, buka lewat `options.allowed_remote_hosts` (daftar host), bukan dengan menyalakan `enable_remote` global. Cara yang lebih baik lagi: sematkan gambar sebagai `data:` URI atau path lokal, sehingga saklarnya tetap mati.
+
+`chroot` (`base_path()`) membatasi berkas lokal mana yang boleh dibaca dari HTML. Ia lapis cadangan, bukan pertahanan utama: `<img src>` yang menunjuk `.env` menghasilkan placeholder gambar rusak, bukan kebocoran isi. Tetap jangan dilebarkan ke `/`.
+
+### Font: Latin aman, sisanya tidak
+
+dompdf membawa font inti (Helvetica, Times, Courier, DejaVu Sans) di `vendor/dompdf/dompdf/lib/fonts`. Teks Indonesia seluruhnya Latin, jadi tidak ada yang perlu disiapkan untuk kebutuhan biasa.
+
+Yang gagal diam-diam adalah **glyph di luar cakupan font** — nama dengan aksara Arab, Han, atau simbol mata uang tertentu keluar sebagai kotak kosong di PDF, tanpa error. Untuk itu font kustom harus didaftarkan ke `storage/fonts` (direktorinya sudah dibuat dan writable; isinya di-gitignore).
+
+`storage/fonts` **tidak ada di git dan tidak ada di arsip backup** — satu-satunya direktori di repo ini yang lolos dari keduanya. Instalasi baru mendapat direktorinya, bukan isinya, dan restore backup juga tidak mengembalikannya. Latar belakang serta dua jalan keluarnya di *Yang di-backup — dan yang sengaja tidak*.
+
+Ingat juga bahwa jalur laravel-excel tidak pernah membaca direktori ini sama sekali (lihat tabel di atas) — font kustom di sana hanya berlaku untuk PDF yang lewat facade.
+
+### `temp_dir` menunjuk `/tmp`, dan itu bukan selalu `/tmp` yang sama
+
+`options.temp_dir` bawaannya `sys_get_temp_dir()` → `/tmp`. Dua hal yang bisa menggigit di produksi dan keduanya tidak terlihat di lokal:
+
+- **systemd dengan `PrivateTmp=true`** memberi tiap service `/tmp` sendiri. PHP-FPM dan queue worker jadi tidak berbagi direktori itu — tidak masalah untuk dompdf yang memakainya sekali pakai dalam satu proses, tapi jangan pernah mengoper path berkas sementara antar proses lewat sana.
+- **`open_basedir`** di shared hosting kerap tidak memuat `/tmp`, dan gejalanya berupa kegagalan render yang pesannya menunjuk font, bukan permission.
+
+Kalau salah satunya kena, arahkan ke `storage/framework/cache` — sejalan dengan `laravel-excel` yang berkas sementaranya juga di sana, dan sama-sama sudah di `backup.source.files.exclude`.
+
+### Ini lambat, dan itu keputusan arsitektur
+
+dompdf memarsing HTML dan CSS di PHP murni — tidak ada biner, tidak ada mesin browser. Konsekuensinya lambat dan boros memori, dan biayanya tumbuh seiring jumlah halaman, bukan jumlah data.
+
+Artinya PDF panjang (rapor sekelas, rekap satu semester) **tidak boleh dirender di dalam request**. Polanya sama persis dengan tombol Backup Sekarang: dispatch ke queue, simpan ke disk, beri tahu saat siap. Dan konsekuensinya juga sama — **tanpa worker jalan, tidak ada berkas yang pernah muncul.** Lihat *Export besar lewat queue*.
+
+Dukungan CSS-nya kira-kira setara browser 2010: **tidak ada flexbox, tidak ada grid**. Template harus ditulis dengan `table` dan `float`. Ini sumber waktu terbuang paling umum di paket ini — layout yang benar di browser bisa berantakan total di PDF, dan tidak ada peringatan apa pun. Uji dengan membuka PDF-nya, bukan dengan melihat Blade-nya di browser.
+
+### Belum tercatat di audit log
+
+Sama seperti media library: mengunduh rapor atau transkrip adalah jenis akses yang layak terlacak, dan tidak ada yang mencatatnya. Kalau nanti ada rute yang menghasilkan PDF berisi data siswa, catat manual satu baris seperti `Backups::download()` melakukannya — bukan lewat trait, karena tidak ada model yang terlibat.
+
+Otorisasinya juga berdiri sendiri: rute yang menghasilkan PDF **wajib punya pengecekan izinnya sendiri**. Kelas bug yang sama dengan channel broadcasting dan action Filament — pengaman di satu lapis tidak ikut ke lapis lain.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -1188,7 +1296,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
 | `ImageDriverConfigurationTest` | Dua tumpukan gambar memakai driver yang sama, nilainya diterima masing-masing paket, EXIF dibuang, dan berkas media mendarat di disk yang ikut backup |
 
-**Broadcasting, pengolahan gambar, dan spreadsheet belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan, belum ada berkas yang diolah, dan belum ada kelas export/import — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
+**Broadcasting, pengolahan gambar, spreadsheet, dan PDF belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan, belum ada berkas yang diolah, belum ada kelas export/import, dan belum ada template PDF — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
 
 ```php
 $this->actingAs($tanpaIzin)->postJson('/broadcasting/auth', [
@@ -1202,6 +1310,8 @@ Menguji `Event::fake()` + `assertDispatched` cuma membuktikan event terkirim, da
 Untuk gambar, prioritasnya sama-sama bukan bagian yang gampang: ukuran hasil resize akan ketahuan salah pada pandangan pertama, sedangkan **EXIF yang lolos ke berkas tersimpan tidak terlihat sama sekali**. Uji berkas hasilnya, bukan konfigurasinya — `config('intervention-image.options.strip')` bisa `true` sementara ada satu pemanggilan yang melewatkan `strip: false`, dan hanya berkas nyatanya yang membuktikan. Tesnya jalankan dengan driver Imagick; dengan GD tesnya selalu hijau karena GD tidak pernah menulis metadata, jadi ia tidak membuktikan apa pun.
 
 Untuk spreadsheet, yang wajib diuji adalah **import yang gagal**, bukan yang berhasil. Export yang salah kolom ketahuan begitu berkasnya dibuka; import yang menerima baris cacat baru ketahuan berbulan-bulan kemudian sebagai data busuk. Yang layak dikunci: berkas dengan kolom kurang ditolak, baris tidak valid tidak menyisakan setengah data (transaksi benar-benar rollback), dan **siapa yang boleh mengimpor** — sama seperti channel broadcasting, itu jalur data masuk yang punya pengecekan izinnya sendiri. `Excel::fake()` menyediakan `assertDownloaded`/`assertStored`/`assertQueued` untuk sisi export.
+
+Untuk PDF, yang layak dikunci **bukan** isi berkasnya. Rendering yang salah ketahuan dalam sekali buka; yang tidak terlihat adalah `enable_php`/`enable_remote` yang berbalik `true` karena seseorang menyalin config dari internet, dan **rute PDF yang lolos ke akun yang tidak berhak melihat datanya**. Yang kedua itu kelas bug yang sama dengan channel broadcasting. Uji juga bahwa berkasnya benar-benar PDF (`%PDF-` di lima byte pertama) ketimbang mencocokkan panjangnya — panjang berubah tiap versi dompdf, magic bytes tidak.
 
 `tests/Feature/ExampleTest.php` dan `tests/Unit/ExampleTest.php` masih bawaan Laravel. Yang Feature menjaga halaman `/` (view `welcome`) tetap 200 — kalau `routes/web.php` diganti, tes itu ikut diganti atau dihapus, jangan dibiarkan merah.
 
@@ -1402,7 +1512,9 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 22. Jangan ubah `MEDIA_DISK` tanpa ikut memperluas `backup.source.files.include`. Disk `public` kebetulan satu-satunya yang ikut arsip backup; memindahkannya membuat seluruh unggahan berhenti terbackup sementara backup tetap melapor sehat.
 23. Pastikan `storage/framework/cache/laravel-excel` bisa ditulis. Di sanalah berkas sementara export/import mendarat; direktorinya tidak ada di git dan dibuat saat pemakaian pertama, jadi permission yang salah baru ketahuan saat export pertama diminta pengguna.
 24. Samakan `memory_limit` PHP dengan ukuran berkas yang realistis, atau ganti `excel.cache.driver` ke `batch`. Bawaannya `memory` menahan **seluruh sel di RAM** — matinya berupa fatal error kehabisan memori, bukan pesan validasi. Lihat *Cache sel `memory`*.
-25. Jangan janjikan export PDF sebelum `composer require dompdf/dompdf`. `config/excel.php` mencantumkan `Excel::DOMPDF`, tapi itu cuma nama pilihan — pustakanya tidak terpasang, dan kegagalannya berupa fatal `Error`, bukan exception yang tertangkap.
+25. Pastikan `storage/fonts` ada dan bisa ditulis. Direktori itu tujuan pendaftaran font kustom dompdf; isinya di-gitignore, jadi instalasi baru mendapat direktorinya tanpa fontnya. Teks Latin tetap jalan dengan font bawaan — yang gagal cuma glyph di luar cakupannya, dan gagalnya berupa kotak kosong di PDF tanpa error apa pun.
+26. Jangan pernah menyalakan `dompdf.options.enable_php`. Ia mengeksekusi `<script type="text/php">` di dalam HTML yang dirender — RCE penuh begitu ada template yang menyentuh input pengguna. `enable_remote` juga biarkan `false`; kalau butuh aset dari URL, pakai `allowed_remote_hosts`, bukan saklar globalnya.
+27. Render PDF panjang lewat queue, bukan di dalam request. dompdf memarsing HTML/CSS di PHP murni dan biayanya tumbuh per halaman — sama seperti tombol Backup Sekarang, dan dengan konsekuensi yang sama: tanpa worker jalan tidak ada berkas yang pernah muncul.
 
 ## Verifikasi cepat
 
@@ -1544,9 +1656,42 @@ zlib
 cache sel: memory | transaksi import: db
 heading: slug | chunk: 1000
 temp: storage/framework/cache/laravel-excel
-driver pdf: tidak ada
+driver pdf: ada
 ```
 
-`driver pdf: tidak ada` **memang keadaan sekarang** dan bukan tanda instalasi gagal — lihat *Export PDF gagal keras*. Ekstensi yang kurang di baris pertama berarti `composer install` seharusnya sudah menolak; kalau ia lolos, paketnya dipasang dengan `--ignore-platform-reqs` dan kegagalannya menunggu di export pertama.
+`driver pdf: ada` sejak `barryvdh/laravel-dompdf` terpasang — ia yang menarik `dompdf/dompdf`, bukan laravel-excel. `tidak ada` berarti paket itu tercopot, dan export `.pdf` akan melempar fatal `Error`. Ekstensi yang kurang di baris pertama berarti `composer install` seharusnya sudah menolak; kalau ia lolos, paketnya dipasang dengan `--ignore-platform-reqs` dan kegagalannya menunggu di export pertama.
 
 `cache sel: memory` aman untuk berkas kecil; sebelum ada import massal, baca *Cache sel `memory`*.
+
+### PDF
+
+```bash
+php artisan config:clear
+php artisan tinker --execute='
+echo "php      : ".var_export(config("dompdf.options.enable_php"), true)." | remote: ".var_export(config("dompdf.options.enable_remote"), true).PHP_EOL;
+echo "kertas   : ".config("dompdf.options.default_paper_size")." | font: ".config("dompdf.options.default_font").PHP_EOL;
+echo "font_dir : ".str_replace(base_path()."/", "", config("dompdf.options.font_dir"))." (".(is_writable(config("dompdf.options.font_dir")) ? "bisa ditulis" : "TIDAK bisa ditulis").")".PHP_EOL;
+$b = Barryvdh\DomPDF\Facade\Pdf::loadHTML("<h1>Rapor</h1>")->output();
+echo "facade   : ".strlen($b)." bytes, magic=".substr($b, 0, 5).PHP_EOL;
+$o = (new Dompdf\Dompdf)->getOptions();
+echo "excel    : kertas ".$o->getDefaultPaperSize().", font_dir ".basename($o->getFontDir())." (default paket, BUKAN config)".PHP_EOL;
+'
+```
+
+Output yang diharapkan:
+
+```
+php      : false | remote: false
+kertas   : a4 | font: serif
+font_dir : storage/fonts (bisa ditulis)
+facade   : 1130 bytes, magic=%PDF-
+excel    : kertas letter, font_dir fonts (default paket, BUKAN config)
+```
+
+`magic=%PDF-` adalah satu-satunya bukti yang berarti — panjangnya berubah tiap versi dompdf dan tiap perubahan HTML, magic bytes tidak.
+
+`font: serif` adalah nama generik CSS, bukan nama berkas; dompdf memetakannya ke DejaVu Serif dari font bawaannya. Mengisinya dengan nama font yang tidak terdaftar **tidak** melempar error — ia jatuh diam-diam ke font bawaan.
+
+Dua baris terakhir **memang seharusnya berbeda**, dan itu bukan salah konfigurasi: phpspreadsheet memanggil `new \Dompdf\Dompdf()` tanpa argumen sehingga tidak pernah melihat `config/dompdf.php`. Baca *Dua jalur PDF, satu di antaranya buta terhadap config* sebelum menyimpulkan config-nya rusak.
+
+`php : true` berarti config-nya dilonggarkan dan aplikasi mengeksekusi PHP dari dalam HTML yang dirender — kembalikan ke `false` sebelum apa pun yang lain.
