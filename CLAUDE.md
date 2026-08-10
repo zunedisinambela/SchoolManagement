@@ -16,14 +16,15 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Backup | spatie/laravel-backup 10 |
 | WebSocket | laravel/reverb 1 + laravel-echo & pusher-js |
 | Gambar | intervention/image 4.2 lewat intervention/image-laravel 4.1 |
+| Media & unggahan | spatie/laravel-medialibrary 11 (membawa spatie/image 3) |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta dua fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, dan pengolah gambar yang belum menyentuh satu berkas.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta tiga fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, dan media library yang belum dilampirkan ke satu model.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
-Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, dan `backup_schedules`.
+Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, `backup_schedules`, dan `media`.
 
 Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/permissions`, `/admin/activities`, `/admin/backups`.
 
@@ -35,6 +36,8 @@ composer run test     # config:clear lalu artisan test
 composer run setup    # install deps, generate key, migrate, build asset
 ./vendor/bin/pint     # format kode PHP
 php artisan reverb:start  # server WebSocket saja, tanpa sisa proses dev
+php artisan storage:link  # symlink public/storage, wajib sekali per instalasi
+php artisan media-library:clean --dry-run   # daftar berkas media yatim
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
 # restore: lewat tombol Pulihkan di /admin/backups, atau langkah CLI di bagian Restore
@@ -781,19 +784,34 @@ $img->encode(new JpegEncoder(quality: 60, progressive: true, strip: true));
 
 **`save()` tanpa argumen menimpa berkas sumbernya.** Ia jatuh ke `origin()->filePath()`, yaitu path yang tadi dibaca `decodePath()`. Untuk thumbnail, itu berarti foto asli tergantikan versi kecilnya dan tidak ada jalan pulang. Selalu berikan path tujuan secara eksplisit kecuali menimpa memang yang dimaksud.
 
-### Driver — nilainya nama class, bukan `gd`
+### Driver — satu env untuk dua paket
 
-`IMAGE_DRIVER` di `.env`. Nilainya **nama class penuh**; `IMAGE_DRIVER=gd` melempar `Argument $driver must be existing class name`.
+`IMAGE_DRIVER` di `.env`, isinya **nama pendek**:
 
 ```
-IMAGE_DRIVER=Intervention\Image\Drivers\Gd\Driver
+IMAGE_DRIVER=gd
 ```
 
-Backslash-nya tunggal dan **jangan dikutip** — nilai tanpa kutip di dotenv tidak diproses escape-nya, sedangkan di dalam kutip ganda `\I` dan `\D` berubah arti.
+Bentuk pendek itu **bukan** yang diminta intervention. Paketnya mengharapkan nama class, dan config bawaannya memang `env('IMAGE_DRIVER', Gd\Driver::class)`. Yang memaksa berubah adalah `spatie/laravel-medialibrary`: ia membaca env **yang sama persis** lewat `env('IMAGE_DRIVER', 'gd')` dan meneruskannya mentah-mentah ke `Spatie\Image\Image::useImageDriver()`, yang cuma menerima `gd`/`imagick`/`vips`.
+
+Satu env, dua format nilai yang saling menolak. Nama class membuat medialibrary melempar `InvalidImageDriver` di **tiap konversi**, dan itu terjadi saat unggah gambar pertama — bukan saat boot, jadi lolos sampai jauh.
+
+Jalan keluarnya: env menyimpan bentuk yang dipakai medialibrary apa adanya, dan `config/intervention-image.php` yang memetakannya ke class.
+
+```php
+'driver' => match (env('IMAGE_DRIVER', 'gd')) {
+    'imagick' => ImagickDriver::class,
+    default => GdDriver::class,
+},
+```
+
+**Jangan kembalikan ke `env(...)` langsung.** Kedua paket akan menunjuk driver berbeda tanpa error apa pun — dan yang ikut berbeda adalah dukungan format serta perlakuan EXIF. Dikunci `ImageDriverConfigurationTest`, lihat *Dua tumpukan gambar* di bagian Media.
+
+`default` di `match` itu memang memaafkan salah ketik: `IMAGE_DRIVER=imagik` menghasilkan GD untuk intervention sementara medialibrary meneruskan `imagik` dan melempar saat konversi. Sengaja tidak dibuat melempar di config — file config dimuat pada **setiap** invokasi artisan, jadi exception di sana mengunci perintah yang justru dibutuhkan untuk memperbaikinya. Yang menangkapnya tes, bukan boot.
 
 GD dipilih sebagai default bukan karena lebih baik, tapi karena lebih pasti ada. Imagick lebih kaya format tapi jauh lebih sering absen di shared hosting.
 
-**Komentar bawaan di `config/intervention-image.php` menyesatkan.** Ia mendaftar tiga "Included options", padahal paketnya cuma membawa dua: `src/Drivers/` isinya hanya `Gd/` dan `Imagick/`. `Vips\Driver` ada di paket terpisah `intervention/image-driver-vips` yang belum terpasang di sini, jadi mengarahkan `IMAGE_DRIVER` ke sana melempar `Argument $driver must be existing class name` — pesan yang terbaca seperti salah ketik, bukan seperti paket yang kurang.
+**Komentar bawaan di `config/intervention-image.php` menyesatkan** dan sudah diganti di repo ini. Ia mendaftar tiga "Included options", padahal paketnya cuma membawa dua: `src/Drivers/` isinya hanya `Gd/` dan `Imagick/`. `Vips\Driver` ada di paket terpisah `intervention/image-driver-vips` yang belum terpasang.
 
 Dukungan format di mesin ini (dua-duanya terpasang):
 
@@ -843,6 +861,103 @@ return response()->image($img, Format::WEBP, quality: 80);
 
 Untuk gambar yang mahal diolah, dahulukan menyimpan hasilnya ke disk ketimbang mengolah ulang tiap request.
 
+## Media (spatie/laravel-medialibrary)
+
+Melampirkan berkas ke model Eloquent: unggahan, koleksi, dan konversi (thumbnail, versi WebP). Versi 11.23. Belum ada model yang memakainya — `User` **tidak** dipasangi `InteractsWithMedia`, karena itu keputusan modul, bukan bagian instalasi.
+
+| Berkas | Isi |
+|---|---|
+| `config/media-library.php` | Disk, ukuran maksimum, queue, optimizer, driver gambar |
+| `database/migrations/*_create_media_table.php` | Tabel `media`, polimorfik ke model mana pun |
+
+Tabel `media` sudah dimigrasi. Tambahkan ke daftar tabel di bagian *Stack* kalau nanti ada tabel lain menyusul.
+
+Memasangnya ke model nanti:
+
+```php
+class Siswa extends Model implements HasMedia
+{
+    use InteractsWithMedia;
+
+    public function registerMediaConversions(?Media $media = null): void
+    {
+        $this->addMediaConversion('thumb')->fit(Fit::Crop, 120, 120);
+    }
+}
+
+$siswa->addMedia($request->file('foto'))->toMediaCollection('foto');
+```
+
+### Perintah bawaan
+
+```bash
+php artisan media-library:regenerate            # bangun ulang konversi (semua model)
+php artisan media-library:regenerate App\\Models\\Siswa --ids=1,2,3
+php artisan media-library:clean --dry-run       # daftar berkas yatim, tanpa menghapus
+php artisan media-library:clean                 # hapus konversi usang & berkas tanpa model
+php artisan media-library:clear App\\Models\\Siswa foto   # kosongkan satu koleksi
+```
+
+`regenerate` dibutuhkan setiap kali definisi konversi berubah — mengganti ukuran `thumb` **tidak** menyentuh berkas yang sudah ada. Konversinya ikut queue seperti biasa, jadi untuk data banyak jalankan dengan worker hidup.
+
+**`media-library:clear` tanpa argumen menghapus seluruh media milik semua model.** Kedua argumennya opsional, dan `ConfirmableTrait` yang dipakainya **hanya** bertanya kalau `APP_ENV=production` — sama persis dengan `activitylog:clean`, lihat *Pembersihan*. Di lokal dan staging ia langsung jalan tanpa konfirmasi, tanpa `--dry-run`, dan tanpa jalan pulang selain restore backup. Selalu sebut model dan koleksinya.
+
+`clean` lebih jinak dan punya `--dry-run` — pakai itu lebih dulu, selalu. Keduanya belum dijadwalkan di `routes/console.php`; kalau nanti berkas yatim jadi masalah, `clean` yang layak dijadwalkan, bukan `clear`.
+
+### Dua tumpukan gambar, dan itu disengaja
+
+Repo ini sekarang punya **dua** pustaka pengolah gambar:
+
+| Pustaka | Dipakai oleh | Untuk apa |
+|---|---|---|
+| `intervention/image` 4.2 | kode aplikasi, langsung | olahan ad-hoc |
+| `spatie/image` 3.9 | `spatie/laravel-medialibrary`, internal | konversi media |
+
+Bukan hasil kelalaian: medialibrary v11 memakai `spatie/image` dan tidak bisa diarahkan ke intervention. Menghapus intervention berarti kehilangan API yang lebih ekspresif untuk olahan di luar media library; menghapus spatie/image berarti kehilangan medialibrary. Keduanya menumpang ekstensi PHP yang sama (GD/Imagick), jadi biayanya kode di `vendor/`, bukan ekstensi tambahan di server.
+
+Yang mahal bukan duplikasinya, tapi **kemungkinan keduanya berbeda driver** — lihat *Driver — satu env untuk dua paket*. Yang menjaga: `ImageDriverConfigurationTest`.
+
+### Disk `public`, dan itu yang membuatnya ikut backup
+
+`disk_name` default `public` → `storage/app/public`. Kebetulan yang menguntungkan: itu **satu-satunya direktori** yang masuk `backup.source.files.include`. Berkas media otomatis ikut arsip backup tanpa menyentuh config backup sama sekali.
+
+**Memindahkannya ke disk lain membuat unggahan berhenti terbackup, tanpa peringatan.** `MEDIA_DISK=local` mengarah ke `storage/app/private` yang tidak ada di `include`; backup tetap "berhasil" dan tetap sehat, isinya saja yang kehilangan seluruh foto. Dikunci `test_media_lands_on_a_disk_that_is_backed_up`. Kalau disknya memang harus pindah, `backup.source.files.include` wajib ikut diperluas di commit yang sama.
+
+**`php artisan storage:link` wajib**, kalau tidak `getUrl()` mengembalikan URL yang 404. Symlink `public/storage` tidak ada di git — ia dibuat per instalasi, sama seperti asset Filament.
+
+### Konversi lewat queue
+
+`queue_conversions_by_default` `true` dan `queue_connection_name` ikut `QUEUE_CONNECTION` (di sini `database`). Jadi thumbnail **tidak** jadi saat unggah selesai — ia menyusul lewat worker.
+
+Konsekuensinya sama dengan tombol Backup Sekarang: **tanpa worker jalan, konversi tidak pernah ada.** Unggahan berhasil, berkas aslinya ada, `getUrl('thumb')` menunjuk berkas yang tidak pernah dibuat. `composer run dev` sudah membawa workernya.
+
+Untuk konversi yang harus langsung ada (avatar kecil yang tampil di halaman yang sama), pakai `->nonQueued()` per konversi — jangan matikan queue global.
+
+### Optimizer: tujuh dikonfigurasi, nol terpasang
+
+`image_optimizers` mendaftar Jpegoptim, Pngquant, Optipng, Svgo, Gifsicle, Cwebp, dan Avifenc. **Tidak satu pun binernya ada di mesin ini.**
+
+Yang membuat ini halus: `OptimizerChain` menangkap `ProcessFailedException` lalu **mencatatnya sebagai log error dan lanjut**. Konversi tetap jadi, ukurannya saja tidak pernah dioptimasi. Tidak ada exception, tidak ada notifikasi, dan satu-satunya jejaknya baris log yang tidak dibaca siapa pun.
+
+```bash
+sudo apt install jpegoptim optipng pngquant gifsicle webp
+npm install -g svgo
+```
+
+Kelas jebakan yang sama dengan biner `sqlite3` untuk backup dan `ext-gd` untuk intervention: dependensi runtime yang tidak diwakili composer. Bedanya yang ini **tidak** gagal keras — ia cuma diam-diam berhenti bekerja.
+
+### Batas ukuran
+
+`max_file_size` 10 MB. Ini batas milik medialibrary, **bukan** pengganti validasi request dan bukan pengganti `upload_max_filesize`/`post_max_size` di PHP. Berkas yang lebih besar dari batas PHP tidak pernah sampai ke medialibrary untuk ditolak dengan rapi — ia mati lebih dulu di lapisan yang pesannya jauh lebih tidak ramah. Samakan ketiganya kalau batasnya diubah.
+
+Foto dari HP modern rutin di atas 5 MB, jadi 10 MB tidak selega kedengarannya.
+
+### Belum tercatat di audit log
+
+`Media` memakai model bawaan paket (`config('media-library.media_model')`), jadi unggah dan hapus berkas **tidak** muncul di `activity_log`. Padahal menghapus foto siswa persis jenis perubahan yang perlu terlacak.
+
+Polanya sudah ada di repo ini — sama dengan `App\Models\Role` dan `App\Models\Permission`: subclass model paketnya, pasang `LogsActivity`, lalu tunjuk dari config. Lihat *Model Role & Permission dioverride*. Belum dikerjakan karena belum ada modul yang mengunggah apa pun.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -861,6 +976,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupScheduleTest` | Default mingguan, cron tiap frekuensi, scheduler pakai jadwal user, tabel hilang tidak bikin crash, ambang monitor ikut frekuensi |
 | `BackupArchivePasswordTest` | Password panel menang atas `.env`, fallback ke `.env`, sampai ke kedua jalur backup, terenkripsi di DB, tidak bocor ke `activity_log` |
 | `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
+| `ImageDriverConfigurationTest` | Dua tumpukan gambar memakai driver yang sama, nilainya diterima masing-masing paket, EXIF dibuang, dan berkas media mendarat di disk yang ikut backup |
 
 **Broadcasting dan pengolahan gambar belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan dan belum ada berkas yang diolah — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
 
@@ -1069,6 +1185,9 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 17. Jalankan `reverb:start` di bawah supervisor (systemd/supervisord), bukan dari SSH. Ia proses yang harus terus hidup, sama seperti queue worker.
 18. Proxy `wss://` di Nginx ke port 8080 dengan header `Upgrade`/`Connection`. Tanpa itu browser di `https://` menolak menyambung, dan penolakannya tidak meninggalkan jejak di log server.
 19. `sudo apt install php8.4-gd php8.4-exif` lalu pastikan `php -m` menampilkannya. `intervention/image` **tidak** mencantumkan `ext-gd` di `require`, jadi `composer install` tetap sukses tanpa itu dan kegagalannya baru muncul saat gambar pertama diproses. `ext-exif` dibutuhkan `autoOrientation`, kalau tidak foto potret tersimpan miring.
+20. `php artisan storage:link`. Symlink `public/storage` tidak ada di git, dan tanpanya tiap `getUrl()` milik media library mengembalikan 404 padahal berkasnya ada.
+21. `sudo apt install jpegoptim optipng pngquant gifsicle webp` (plus `npm install -g svgo`). Optimizer yang binernya hilang **tidak** menggagalkan konversi — ia dicatat sebagai log error lalu dilewati, jadi gambar tersimpan tanpa optimasi selamanya tanpa ada yang tahu.
+22. Jangan ubah `MEDIA_DISK` tanpa ikut memperluas `backup.source.files.include`. Disk `public` kebetulan satu-satunya yang ikut arsip backup; memindahkannya membuat seluruh unggahan berhenti terbackup sementara backup tetap melapor sehat.
 
 ## Verifikasi cepat
 
@@ -1154,7 +1273,9 @@ php artisan config:clear
 php artisan tinker --execute="
 use Intervention\Image\Laravel\Facades\Image;
 use Intervention\Image\Format;
-echo 'driver: '.config('intervention-image.driver').PHP_EOL;
+echo 'intervention: '.config('intervention-image.driver').PHP_EOL;
+echo 'medialibrary: '.config('media-library.image_driver').PHP_EOL;
+echo 'disk media: '.config('media-library.disk_name').PHP_EOL;
 echo 'strip: '.var_export(config('intervention-image.options.strip'), true).PHP_EOL;
 \\\$t = Image::createImage(400, 300)->fill('336699')->scale(width: 120);
 echo 'scaled: '.\\\$t->width().'x'.\\\$t->height().PHP_EOL;
@@ -1168,10 +1289,14 @@ Output yang diharapkan:
 exif
 gd
 imagick
-driver: Intervention\Image\Drivers\Gd\Driver
+intervention: Intervention\Image\Drivers\Gd\Driver
+medialibrary: gd
+disk media: public
 strip: true
 scaled: 120x90
 webp: 98 bytes
 ```
+
+Dua baris driver pertama **harus menunjuk driver yang sama** — satu nama class, satu nama pendek. Kalau berbeda, `ImageDriverConfigurationTest` sudah merah lebih dulu; kalau `medialibrary` berisi nama class, tiap konversi gambar akan melempar `InvalidImageDriver`.
 
 `imagick` opsional — yang wajib cuma `gd` (atau Imagick kalau `IMAGE_DRIVER` diarahkan ke sana) dan `exif`. `strip: false` berarti `config/intervention-image.php` kembali ke bawaan paket — baca alasannya di *`strip` sengaja `true`* sebelum membiarkannya. `Call to undefined method` pada `createImage` atau `encodeUsingFormat` berarti versinya turun di bawah 4.2, lihat tabel rename API.

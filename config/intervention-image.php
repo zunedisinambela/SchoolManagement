@@ -1,6 +1,7 @@
 <?php
 
-use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\Drivers\Gd\Driver as GdDriver;
+use Intervention\Image\Drivers\Imagick\Driver as ImagickDriver;
 
 return [
 
@@ -9,16 +10,26 @@ return [
     | Image Driver
     |--------------------------------------------------------------------------
     |
-    | Intervention Image supports “GD Library” and “Imagick” to process images
-    | internally. Depending on your PHP setup, you can choose one of them.
+    | Paket ini mengharapkan nama class, sementara spatie/laravel-medialibrary
+    | membaca env yang SAMA (`IMAGE_DRIVER`) dan mengharapkan nama pendek
+    | `gd`/`imagick`. Satu env tidak bisa memenuhi keduanya, dan nilai class
+    | membuat medialibrary melempar InvalidImageDriver di tiap konversi.
     |
-    | Included options:
-    |   - \Intervention\Image\Drivers\Gd\Driver::class
-    |   - \Intervention\Image\Drivers\Imagick\Driver::class
-    |   - \Intervention\Image\Drivers\Vips\Driver::class
+    | Karena itu env-nya menyimpan nama pendek — bentuk yang dipakai
+    | medialibrary apa adanya — dan pemetaan ke class dilakukan di sini.
+    | Jangan kembalikan ke env(...) langsung: kedua paket akan berbeda driver
+    | tanpa error, dan itu berarti dukungan format serta kebijakan EXIF ikut
+    | berbeda. Dikunci `ImageDriverConfigurationTest`.
+    |
+    | Vips butuh paket terpisah `intervention/image-driver-vips` yang belum
+    | terpasang, jadi sengaja tidak ada di sini walau komentar bawaan paket
+    | mencantumkannya.
     */
 
-    'driver' => env('IMAGE_DRIVER', Driver::class),
+    'driver' => match (env('IMAGE_DRIVER', 'gd')) {
+        'imagick' => ImagickDriver::class,
+        default => GdDriver::class,
+    },
 
     /*
     |--------------------------------------------------------------------------
