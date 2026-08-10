@@ -17,10 +17,11 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | WebSocket | laravel/reverb 1 + laravel-echo & pusher-js |
 | Gambar | intervention/image 4.2 lewat intervention/image-laravel 4.1 |
 | Media & unggahan | spatie/laravel-medialibrary 11 (membawa spatie/image 3) |
+| Spreadsheet | maatwebsite/excel 3.1 (membawa phpoffice/phpspreadsheet 1.30) |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta tiga fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, dan media library yang belum dilampirkan ke satu model.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta empat fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, dan spreadsheet yang belum punya satu kelas export maupun import.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
@@ -40,6 +41,8 @@ php artisan storage:link  # symlink public/storage, wajib sekali per instalasi
 php artisan shield:generate --all --panel=admin   # izin + policy dari isi panel
 php artisan shield:super-admin --user=1           # jadikan user tertentu super-admin
 php artisan media-library:clean --dry-run   # daftar berkas media yatim
+php artisan make:export SiswaExport --model=Siswa   # kelas export spreadsheet
+php artisan make:import SiswaImport --model=Siswa   # kelas import spreadsheet
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
 # restore: lewat tombol Pulihkan di /admin/backups, atau langkah CLI di bagian Restore
@@ -949,6 +952,10 @@ php -m | grep -E '^(gd|imagick|exif)$'
 
 `ext-exif` disarankan paketnya sendiri dan dibutuhkan `autoOrientation` untuk membaca orientasi. Tanpa itu foto potret dari HP tersimpan miring.
 
+**Sejak `maatwebsite/excel` masuk, `ext-gd` sebenarnya sudah dipaksa composer** — bukan oleh intervention, melainkan oleh `phpoffice/phpspreadsheet` yang mencantumkannya di `require`. Jadi `composer install` sekarang **gagal keras** di server tanpa GD, dan celah di atas tertutup secara kebetulan.
+
+Jangan bersandar padanya. Yang menutup celah itu paket yang sama sekali tidak berhubungan dengan pengolahan gambar; mencopot laravel-excel suatu saat akan membukanya kembali tanpa ada yang menghubungkan kedua hal itu. **`ext-imagick` dan `ext-exif` tetap tidak dipaksa siapa pun** — keduanya masih murni tanggung jawab checklist deploy.
+
 ### Hubungannya dengan Filament
 
 `FileUpload` di Filament punya `->imageEditor()`, dan itu **bukan pengganti** paket ini: editor Filament berjalan di **browser** (crop/rotate sebelum unggah, bisa dilewati siapa pun yang mengunggah lewat cara lain), sedangkan Intervention berjalan di **server** setelah berkas mendarat. Thumbnail, normalisasi ukuran, dan pembuangan EXIF hanya bisa dijamin di sisi server.
@@ -1060,6 +1067,107 @@ Foto dari HP modern rutin di atas 5 MB, jadi 10 MB tidak selega kedengarannya.
 
 Polanya sudah ada di repo ini — sama dengan `App\Models\Role` dan `App\Models\Permission`: subclass model paketnya, pasang `LogsActivity`, lalu tunjuk dari config. Lihat *Model Role & Permission dioverride*. Belum dikerjakan karena belum ada modul yang mengunggah apa pun.
 
+## Spreadsheet (maatwebsite/excel)
+
+Export dan import XLSX/CSV. Versi 3.1.69, membawa `phpoffice/phpspreadsheet` 1.30.6. Belum ada satu pun kelas export maupun import — terpasang sebagai fondasi, sama seperti Reverb dan intervention.
+
+| Berkas | Isi |
+|---|---|
+| `config/excel.php` | Chunk, cache sel, transaksi import, path berkas sementara, detektor ekstensi |
+
+Provider dan alias **tidak** didaftarkan manual. Halaman instalasi 3.1 di dokumentasinya menyuruh menambahkan `ExcelServiceProvider` ke `config/app.php` dan alias `Excel` — itu instruksi untuk Laravel < 5.5. Laravel 13 tidak punya array `providers`/`aliases` di `config/app.php` lagi, jadi mengikuti langkah itu justru error. Auto-discovery sudah menanganinya.
+
+```bash
+php artisan make:export SiswaExport --model=Siswa
+php artisan make:import SiswaImport --model=Siswa
+```
+
+```php
+return Excel::download(new SiswaExport, 'siswa.xlsx');   // unduh langsung
+Excel::store(new SiswaExport, 'siswa.xlsx', 'public');   // simpan ke disk
+Excel::queue(new SiswaImport, $request->file('berkas')); // lewat queue
+```
+
+### Dokumentasinya 3.1, dan itu versi stabil terakhir
+
+Bukan versi lama yang tertinggal — cabang `4.x-dev` ada di packagist tapi belum pernah rilis stabil, jadi `^3.1` memang pilihan yang benar sekarang. Yang perlu disadari cuma umurnya: halaman dokumen 3.1 berumur bertahun-tahun, dan sebagian langkahnya (lihat di atas) sudah tidak berlaku di Laravel 13.
+
+### Dua plafon versi yang dibawa phpspreadsheet 1.x
+
+`maatwebsite/excel` 3.1 mengunci `phpoffice/phpspreadsheet` di `^1.29`, sementara upstream sudah di 4.x. Dua konsekuensinya berbeda sifat:
+
+**1. PHP 8.5 akan memblokir `composer update`.** phpspreadsheet 1.x menyatakan `"php": ">=7.4.0 <8.5.0"`. Repo ini sudah di PHP 8.4 — satu langkah dari plafonnya. Naik ke 8.5 berarti composer menolak resolusi sampai laravel-excel 4 rilis, dan gejalanya muncul saat upgrade PHP, bukan saat menulis kode.
+
+**2. Fitur baru phpspreadsheet tidak akan datang.** 1.x masih menerima perbaikan keamanan tapi bukan fitur. `composer audit` bersih saat dipasang; ulangi pemeriksaan itu berkala, karena satu-satunya jalan naik adalah menunggu laravel-excel 4.
+
+### Export PDF gagal keras — tidak ada driver terpasang
+
+`extension_detector.pdf` di config berisi `Excel::DOMPDF`, dan itu **hanya nama pilihan** — pustakanya tidak ikut terpasang. Ketiga kandidatnya (`dompdf/dompdf`, `mpdf/mpdf`, `tecnickcom/tcpdf`) tidak ada di `vendor/`.
+
+Akibatnya `Excel::download($export, 'siswa.pdf')` melempar **fatal `Error`, bukan exception yang bisa ditangkap dengan `catch (Exception)`**:
+
+```
+Error: Class "Dompdf\Dompdf" not found
+```
+
+Kalau nanti butuh PDF, pasang salah satunya dulu:
+
+```bash
+composer require dompdf/dompdf
+```
+
+Baris `'pdf' => Excel::DOMPDF` sudah cocok dengan itu; ganti nilainya kalau memilih mPDF atau TCPDF. Jangan berasumsi PDF sudah bisa hanya karena tercantum di config.
+
+### Cache sel `memory` — dan itu batas ukuran yang sebenarnya
+
+`cache.driver` bawaannya `memory`: **seluruh sel disimpan di RAM PHP**. `max_file_size` milik medialibrary tidak berlaku di sini, dan `chunk_size` 1000 hanya memotong query, bukan lembar yang dibaca.
+
+Berkas import beberapa ribu baris cukup untuk menabrak `memory_limit`, dan matinya berupa fatal error kehabisan memori — bukan validasi yang rapi. Kalau itu terjadi, jangan naikkan `memory_limit`; ganti drivernya:
+
+```php
+'cache' => ['driver' => 'batch', 'batch' => ['memory_limit' => 60000]],
+```
+
+`batch` menahan sel di memori sampai ambangnya lalu menumpahkannya ke cache store. Lebih lambat, tapi ukuran berkas berhenti jadi taruhan. `illuminate` menulis tiap sel ke cache store — paling hemat memori, paling lambat.
+
+### Import dibungkus transaksi — dan di SQLite itu mengunci seluruh database
+
+`transactions.handler` bawaannya `db`, jadi satu import = satu transaksi. Bagus: import yang gagal di tengah ter-rollback utuh, tidak meninggalkan separuh baris.
+
+Yang perlu disadari khusus repo ini: **SQLite mengunci seluruh berkas database, bukan per tabel**. Import besar karena itu memblokir tulisan lain selama ia berjalan — termasuk `backup:run`, yang justru membuka transaksinya sendiri lewat `BEGIN IMMEDIATE` (lihat *Butuh biner `sqlite3`, bukan cuma PHP*). Import panjang yang bertabrakan dengan jadwal backup akan membuat salah satunya gagal dengan `database is locked`.
+
+Kalau nanti ada import massal terjadwal, jauhkan jamnya dari `backup:run` — sama seperti `backup:clean` sengaja dijauhkan dari `activitylog:clean`.
+
+### Import melewati audit log kalau memakai insert massal
+
+Jalur data masuk yang **tidak** lewat panel, jadi tidak otomatis tercatat. `ToModel` menyimpan per baris lewat model, jadi trait `LogsActivity` tetap jalan — tapi `ToCollection` yang diikuti `Model::insert()`, dan `WithBatchInserts`, **melewati model event sepenuhnya**. Ratusan siswa bisa masuk tanpa satu baris pun di `activity_log`.
+
+Kelas masalah yang sama dengan `DatabaseSeeder` yang membungkam event — lihat *`DatabaseSeeder` membungkam model event*. Bedanya di sini yang hilang jejak auditnya, bukan cache izin.
+
+Kalau import massal memang perlu, catat manual satu baris ringkasan (berapa baris, oleh siapa, dari berkas apa) seperti `Backups::savePassword()` melakukannya — bukan satu baris per siswa.
+
+### Berkas sementara tidak ikut backup, dan itu benar
+
+`temporary_files.local_path` menunjuk `storage/framework/cache/laravel-excel` — di luar `storage/app/public`, satu-satunya direktori yang masuk `backup.source.files.include`. Itu memang seharusnya: isinya sampah sementara.
+
+Yang perlu diperhatikan justru **hasil export yang disimpan permanen**. `Excel::store($export, 'siswa.xlsx')` tanpa argumen disk memakai disk default (`local` → `storage/app/private`), yang **tidak ikut arsip backup**. Sebutkan disknya secara eksplisit kalau berkasnya harus bertahan:
+
+```php
+Excel::store(new SiswaExport, 'siswa.xlsx', 'public');
+```
+
+Latar belakangnya di *Disk `public`, dan itu yang membuatnya ikut backup*.
+
+`remote_disk` sengaja dibiarkan `null` — ia hanya dibutuhkan kalau queue worker berjalan di mesin berbeda dari yang menerima unggahan. Repo ini satu mesin. Kalau nanti workernya dipisah, `null` membuat export/import terjadwal gagal menemukan berkas sementaranya, dan itu tidak terlihat sampai dijalankan di sana.
+
+### Export besar lewat queue
+
+`Excel::queue()` dan `ShouldQueue` memakai `QUEUE_CONNECTION` yang di sini `database`. Konsekuensinya identik dengan tombol Backup Sekarang dan konversi medialibrary: **tanpa worker jalan, tidak ada berkas yang pernah muncul.** Permintaannya sukses, notifikasinya keluar, hasilnya tidak ada. `composer run dev` sudah membawa workernya.
+
+### Baris heading di-slug
+
+`imports.heading_row.formatter` bawaannya `slug`, jadi `WithHeadingRow` mengubah `Nama Lengkap` di berkas jadi kunci `nama_lengkap`. Berguna, tapi berarti **kunci array tidak sama persis dengan teks di spreadsheet** — dan berkas dari pengguna sungguhan membawa spasi ganda, huruf besar, serta tanda baca yang ikut ternormalisasi. Jangan mencocokkan kunci dengan menebak; `dd()` satu baris pertama saat menulis importernya.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -1080,7 +1188,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
 | `ImageDriverConfigurationTest` | Dua tumpukan gambar memakai driver yang sama, nilainya diterima masing-masing paket, EXIF dibuang, dan berkas media mendarat di disk yang ikut backup |
 
-**Broadcasting dan pengolahan gambar belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan dan belum ada berkas yang diolah — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
+**Broadcasting, pengolahan gambar, dan spreadsheet belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan, belum ada berkas yang diolah, dan belum ada kelas export/import — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
 
 ```php
 $this->actingAs($tanpaIzin)->postJson('/broadcasting/auth', [
@@ -1092,6 +1200,8 @@ $this->actingAs($tanpaIzin)->postJson('/broadcasting/auth', [
 Menguji `Event::fake()` + `assertDispatched` cuma membuktikan event terkirim, dan itu bagian yang paling tidak mungkin salah. Yang benar-benar berisiko adalah channel yang lolos ke akun yang seharusnya tidak melihat datanya — kelas bug yang sama dengan *Action Filament TIDAK ikut `canEdit()`/`canDelete()`*: pengaman di satu lapis tidak otomatis berlaku di lapis lain.
 
 Untuk gambar, prioritasnya sama-sama bukan bagian yang gampang: ukuran hasil resize akan ketahuan salah pada pandangan pertama, sedangkan **EXIF yang lolos ke berkas tersimpan tidak terlihat sama sekali**. Uji berkas hasilnya, bukan konfigurasinya — `config('intervention-image.options.strip')` bisa `true` sementara ada satu pemanggilan yang melewatkan `strip: false`, dan hanya berkas nyatanya yang membuktikan. Tesnya jalankan dengan driver Imagick; dengan GD tesnya selalu hijau karena GD tidak pernah menulis metadata, jadi ia tidak membuktikan apa pun.
+
+Untuk spreadsheet, yang wajib diuji adalah **import yang gagal**, bukan yang berhasil. Export yang salah kolom ketahuan begitu berkasnya dibuka; import yang menerima baris cacat baru ketahuan berbulan-bulan kemudian sebagai data busuk. Yang layak dikunci: berkas dengan kolom kurang ditolak, baris tidak valid tidak menyisakan setengah data (transaksi benar-benar rollback), dan **siapa yang boleh mengimpor** — sama seperti channel broadcasting, itu jalur data masuk yang punya pengecekan izinnya sendiri. `Excel::fake()` menyediakan `assertDownloaded`/`assertStored`/`assertQueued` untuk sisi export.
 
 `tests/Feature/ExampleTest.php` dan `tests/Unit/ExampleTest.php` masih bawaan Laravel. Yang Feature menjaga halaman `/` (view `welcome`) tetap 200 — kalau `routes/web.php` diganti, tes itu ikut diganti atau dihapus, jangan dibiarkan merah.
 
@@ -1290,6 +1400,9 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 20. `php artisan storage:link`. Symlink `public/storage` tidak ada di git, dan tanpanya tiap `getUrl()` milik media library mengembalikan 404 padahal berkasnya ada.
 21. `sudo apt install jpegoptim optipng pngquant gifsicle webp` (plus `npm install -g svgo`). Optimizer yang binernya hilang **tidak** menggagalkan konversi — ia dicatat sebagai log error lalu dilewati, jadi gambar tersimpan tanpa optimasi selamanya tanpa ada yang tahu.
 22. Jangan ubah `MEDIA_DISK` tanpa ikut memperluas `backup.source.files.include`. Disk `public` kebetulan satu-satunya yang ikut arsip backup; memindahkannya membuat seluruh unggahan berhenti terbackup sementara backup tetap melapor sehat.
+23. Pastikan `storage/framework/cache/laravel-excel` bisa ditulis. Di sanalah berkas sementara export/import mendarat; direktorinya tidak ada di git dan dibuat saat pemakaian pertama, jadi permission yang salah baru ketahuan saat export pertama diminta pengguna.
+24. Samakan `memory_limit` PHP dengan ukuran berkas yang realistis, atau ganti `excel.cache.driver` ke `batch`. Bawaannya `memory` menahan **seluruh sel di RAM** — matinya berupa fatal error kehabisan memori, bukan pesan validasi. Lihat *Cache sel `memory`*.
+25. Jangan janjikan export PDF sebelum `composer require dompdf/dompdf`. `config/excel.php` mencantumkan `Excel::DOMPDF`, tapi itu cuma nama pilihan — pustakanya tidak terpasang, dan kegagalannya berupa fatal `Error`, bukan exception yang tertangkap.
 
 ## Verifikasi cepat
 
@@ -1404,3 +1517,36 @@ webp: 98 bytes
 Dua baris driver pertama **harus menunjuk driver yang sama** — satu nama class, satu nama pendek. Kalau berbeda, `ImageDriverConfigurationTest` sudah merah lebih dulu; kalau `medialibrary` berisi nama class, tiap konversi gambar akan melempar `InvalidImageDriver`.
 
 `imagick` opsional — yang wajib cuma `gd` (atau Imagick kalau `IMAGE_DRIVER` diarahkan ke sana) dan `exif`. `strip: false` berarti `config/intervention-image.php` kembali ke bawaan paket — baca alasannya di *`strip` sengaja `true`* sebelum membiarkannya. `Call to undefined method` pada `createImage` atau `encodeUsingFormat` berarti versinya turun di bawah 4.2, lihat tabel rename API.
+
+### Spreadsheet
+
+```bash
+php -m | grep -E '^(zip|xml|xmlwriter|xmlreader|SimpleXML|iconv|zlib)$' | sort
+php artisan config:clear
+php artisan tinker --execute='
+echo "cache sel: ".config("excel.cache.driver")." | transaksi import: ".config("excel.transactions.handler").PHP_EOL;
+echo "heading: ".config("excel.imports.heading_row.formatter")." | chunk: ".config("excel.exports.chunk_size").PHP_EOL;
+echo "temp: ".str_replace(base_path()."/", "", config("excel.temporary_files.local_path")).PHP_EOL;
+echo "driver pdf: ".(class_exists("Dompdf\\Dompdf") ? "ada" : "tidak ada").PHP_EOL;
+'
+```
+
+Output yang diharapkan:
+
+```
+iconv
+SimpleXML
+xml
+xmlreader
+xmlwriter
+zip
+zlib
+cache sel: memory | transaksi import: db
+heading: slug | chunk: 1000
+temp: storage/framework/cache/laravel-excel
+driver pdf: tidak ada
+```
+
+`driver pdf: tidak ada` **memang keadaan sekarang** dan bukan tanda instalasi gagal — lihat *Export PDF gagal keras*. Ekstensi yang kurang di baris pertama berarti `composer install` seharusnya sudah menolak; kalau ia lolos, paketnya dipasang dengan `--ignore-platform-reqs` dan kegagalannya menunggu di export pertama.
+
+`cache sel: memory` aman untuk berkas kecil; sebelum ada import massal, baca *Cache sel `memory`*.
