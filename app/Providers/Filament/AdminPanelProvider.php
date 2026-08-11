@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
+use Binafy\LaravelUserMonitoring\Middlewares\VisitMonitoringMiddleware;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -72,6 +73,19 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
+                /*
+                 * Pencatat kunjungan milik binafy/laravel-user-monitoring.
+                 *
+                 * Dipasang di panel, BUKAN di grup `web` global. Grup global
+                 * akan ikut mencatat halaman welcome dan tiap rute publik yang
+                 * lahir nanti; yang benar-benar layak dipantau di aplikasi ini
+                 * cuma panel adminnya.
+                 *
+                 * Paketnya sendiri hanya memasang middleware ini pada rute
+                 * bawaannya — yang di repo ini dikosongkan — jadi tanpa baris
+                 * ini tidak ada satu pun kunjungan yang tercatat.
+                 */
+                VisitMonitoringMiddleware::class,
             ])
             ->authMiddleware([
                 Authenticate::class,

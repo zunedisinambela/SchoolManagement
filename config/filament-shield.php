@@ -1,9 +1,12 @@
 <?php
 
 declare(strict_types=1);
+use App\Filament\Resources\ActionMonitorings\ActionMonitoringResource;
 use App\Filament\Resources\Activities\ActivityResource;
+use App\Filament\Resources\AuthenticationMonitorings\AuthenticationMonitoringResource;
 use App\Filament\Resources\Roles\RoleResource;
 use App\Filament\Resources\Users\UserResource;
+use App\Filament\Resources\VisitMonitorings\VisitMonitoringResource;
 use Filament\Pages\Dashboard;
 use Filament\Widgets\AccountWidget;
 use Filament\Widgets\FilamentInfoWidget;
@@ -268,6 +271,18 @@ return [
             ActivityResource::class => [
                 'viewAny',
                 'view',
+            ],
+            // Ketiganya read-only dan tidak punya halaman detail — tabelnya
+            // sudah memperlihatkan seluruh baris. `viewAny` saja; izin `view`
+            // tanpa halaman view cuma centang yang tidak menjaga apa pun.
+            VisitMonitoringResource::class => [
+                'viewAny',
+            ],
+            ActionMonitoringResource::class => [
+                'viewAny',
+            ],
+            AuthenticationMonitoringResource::class => [
+                'viewAny',
             ],
             UserResource::class => [
                 'viewAny',

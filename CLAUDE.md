@@ -21,6 +21,7 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | PDF | barryvdh/laravel-dompdf 3.1 (membawa dompdf/dompdf 3.1) |
 | Server aplikasi | laravel/octane 2.18 + FrankenPHP (opsional, belum dipakai `composer run dev`) |
 | Pembaca log | opcodesio/log-viewer 3.24 di `/log-viewer` |
+| Pemantauan pengguna | binafy/laravel-user-monitoring 1.2 — UI bawaannya dimatikan, diganti resource panel |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
@@ -32,9 +33,9 @@ Octane berdiri di kategori lain. Ia bukan fondasi yang menunggu dipakai melainka
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
-Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, `backup_schedules`, dan `media`.
+Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, `backup_schedules`, `media`, serta tiga tabel pemantauan (`visits_monitoring`, `actions_monitoring`, `authentications_monitoring`).
 
-Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/activities`, `/admin/backups`, `/admin/octane`. (`/admin/permissions` sudah tidak ada — izin kini dicentang di dalam editor Role milik filament-shield.)
+Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/activities`, `/admin/backups`, `/admin/octane`, dan grup **Pemantauan** berisi `/admin/visit-monitorings`, `/admin/action-monitorings`, `/admin/authentication-monitorings`. (`/admin/permissions` sudah tidak ada — izin kini dicentang di dalam editor Role milik filament-shield.)
 
 Satu menu di panel **bukan** halaman panel: **Log Viewer** cuma `NavigationItem` yang menunjuk ke `/log-viewer`, rute milik `opcodesio/log-viewer` di luar Filament. Konsekuensinya dibahas di *Log Viewer* — yang terpenting, `Access:AdminPanel` tidak menjaganya.
 
@@ -53,6 +54,10 @@ php artisan storage:link  # symlink public/storage, wajib sekali per instalasi
 php artisan shield:generate --all --panel=admin   # izin + policy dari isi panel
 php artisan shield:super-admin --user=1           # jadikan user tertentu super-admin
 php artisan media-library:clean --dry-run   # daftar berkas media yatim
+php artisan laravel-user-monitoring:remove-visit-monitoring-records   # pangkas kunjungan lama
+# Perintah itu HANYA menyentuh visits_monitoring, dan menolak jalan kalau
+# `delete_days` 0. actions_ dan authentications_monitoring tidak punya
+# pembersih bawaan sama sekali.
 php artisan make:export SiswaExport --model=Siswa   # kelas export spreadsheet
 php artisan make:import SiswaImport --model=Siswa   # kelas import spreadsheet
 php artisan vendor:publish --provider="Barryvdh\DomPDF\ServiceProvider"   # config/dompdf.php
@@ -91,7 +96,7 @@ Resource read-only (Log Aktivitas) sengaja **tidak punya** `Pages/Create*`, `Pag
 
 **`app/Filament/Resources/Roles/` tidak mengikuti pola ini** dan memang tidak seharusnya. Isinya hasil `php artisan shield:publish` — form, tabel, dan halaman digabung dalam satu `RoleResource.php` sesuai bentuk stub Shield. Menyusun ulang ke pola repo akan hilang begitu `shield:publish` dijalankan lagi. Yang ditambahkan di sana cuma penguncian super-admin dan perbaikan hook halaman; lihat *Berkas hasil `shield:publish` bukan milikmu*.
 
-Navigasi dikelompokkan lewat `$navigationGroup`. Yang ada sekarang: grup **Manajemen Akses** (`$navigationSort` 10/20) dan Log Aktivitas tanpa grup (`$navigationSort` 90).
+Navigasi dikelompokkan lewat `$navigationGroup`. Yang ada sekarang: grup **Manajemen Akses** (`$navigationSort` 10/20), grup **Pemantauan** (91/92/93), dan Log Aktivitas tanpa grup (90). Backup (80), Octane (85), serta tautan Log Viewer (87) juga di luar grup.
 
 **Asset panel di-gitignore.** `public/css/filament`, `public/js/filament`, `public/fonts/filament` adalah hasil generate, bukan source. Setelah `composer update` atau saat deploy **wajib** jalankan:
 
@@ -139,7 +144,7 @@ php artisan shield:generate --resource=SiswaResource --option=permissions
 php artisan shield:super-admin --user=1
 ```
 
-Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Sembilan belas izin yang ada sekarang:
+Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Dua puluh dua izin yang ada sekarang:
 
 | Sumber | Izin |
 |---|---|
@@ -148,6 +153,9 @@ Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `per
 | `ActivityResource` | `ViewAny:Activity`, `View:Activity` |
 | `Backups` (page) | `View:Backups` |
 | `Octane` (page) | `View:Octane` |
+| `VisitMonitoringResource` | `ViewAny:VisitMonitoring` |
+| `ActionMonitoringResource` | `ViewAny:ActionMonitoring` |
+| `AuthenticationMonitoringResource` | `ViewAny:AuthenticationMonitoring` |
 | kustom | `Access:AdminPanel`, `Restore:Backup`, `Reload:Octane`, `View:LogViewer`, `Delete:LogFile` |
 
 **Lima izin kustom, dan tidak satu pun kelalaian.** Tidak ada model di balik "panel itu sendiri", di balik "memulihkan arsip", di balik "memuat ulang worker", maupun di balik halaman yang rutenya milik paket lain, jadi kelimanya dideklarasikan di `custom_permissions` pada config. Agar bisa dicentang lewat UI, `shield_resource.tabs.custom_permissions` harus `true` — bawaan paketnya `false`, dan dengan itu `Restore:Backup`, `Reload:Octane`, `View:LogViewer`, serta `Delete:LogFile` tidak akan pernah bisa diberikan lewat panel.
@@ -169,7 +177,7 @@ public function delete(AuthUser $authUser, Role $role): bool
 }
 ```
 
-Yang ada sekarang: `UserPolicy`, `RolePolicy`, `ActivityPolicy`. Ketiganya **kode, bukan data** — masuk git, dan bukan urusan seeder (karena itu seedernya memakai `--option=permissions`).
+Yang ada sekarang enam: `UserPolicy`, `RolePolicy`, `ActivityPolicy`, `VisitMonitoringPolicy`, `ActionMonitoringPolicy`, `AuthenticationMonitoringPolicy`. Semuanya **kode, bukan data** — masuk git, dan bukan urusan seeder (karena itu seedernya memakai `--option=permissions`).
 
 **Sekarang ada dua lapis otorisasi, dan yang di resource menang.** Filament menanyakan `can*()` statis di resource lebih dulu; kalau resource tidak mengoverride, barulah policy dipakai. Pembagiannya sekarang:
 
@@ -178,16 +186,19 @@ Yang ada sekarang: `UserPolicy`, `RolePolicy`, `ActivityPolicy`. Ketiganya **kod
 | `RoleResource` | `canAccess` (`ViewAny:Role`) | `canEdit`, `canDelete`, `canDeleteAny` — penguncian super-admin |
 | `UserResource` | *(tidak ada)* | `canAccess`, `canDelete`, `canDeleteAny` — anti hapus diri & super-admin terakhir |
 | `ActivityResource` | *(tidak ada)* | semuanya — log audit read-only |
+| Ketiga `*MonitoringResource` | *(tidak ada)* | semuanya — jejak pemantauan read-only |
 
 **Ini jebakan yang menunggu.** `RolePolicy::delete()` mengizinkan siapa pun yang punya `Delete:Role` menghapus role apa pun — **termasuk `super-admin`**. Satu-satunya yang menahannya adalah override `canDelete()` di `RoleResource`. Menghapus override itu karena "kan sudah ada policy-nya" akan mengembalikan izin menghapus role yang memegang gate. Sama untuk `UserPolicy::delete()` versus larangan menghapus akun sendiri. Dikunci `test_the_super_admin_role_is_locked` dan `TableActionAuthorizationTest`.
 
-**`ActivityPolicy` tidak ditemukan otomatis.** Laravel mencocokkan policy lewat konvensi nama: `App\Models\Foo` → `App\Policies\FooPolicy`. Model Activity ada di paket activitylog, bukan di `App\Models`, jadi tidak ada yang menemukannya. Karena itu `AppServiceProvider::boot()` memanggil:
+**Empat policy tidak ditemukan otomatis.** Laravel mencocokkan policy lewat konvensi nama: `App\Models\Foo` → `App\Policies\FooPolicy`. Empat model di sini tidak tinggal di `App\Models` sama sekali — `Activity` milik paket activitylog, dan ketiga model pemantauan milik `Binafy\LaravelUserMonitoring\Models` — jadi tidak ada yang menemukan policy-nya. Karena itu `AppServiceProvider::boot()` memanggil:
 
 ```php
 FilamentShield::enforcePolicies();
 ```
 
-`shield:generate` mencetak `(requires registration)` di sebelah policy yang butuh ini. Kalau nanti ada model paket lain yang dijadikan resource, gejalanya sama: policy-nya ada, isinya benar, dan tidak pernah dipanggil.
+`shield:generate` mencetak `(requires registration)` di sebelah policy yang butuh ini; sekarang ada empat baris seperti itu. Tiap model paket yang dijadikan resource menambah satu lagi, dan gejala kalau terlewat selalu sama: policy-nya ada, isinya benar, dan tidak pernah dipanggil.
+
+Khusus ketiga resource pemantauan, `enforcePolicies()` sebenarnya tidak menentukan apa pun — `canAccess()` di resource sudah mengoverride semuanya, dan policy-nya tidak pernah sampai ditanya. Yang membuatnya tetap penting: kalau override itu dihapus suatu hari, policy-lah yang menahan, dan tanpa registrasi ini tidak ada yang menahan.
 
 ### Role yang ada dan izin bawaannya
 
@@ -370,6 +381,8 @@ Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **L
 | `backup` | aksi di `App\Filament\Pages\Backups` | `backup-dijalankan`, `backup-diunduh`, `backup-dihapus`, `password-arsip-diubah`, `backup-dipulihkan` |
 | `backup` | trait `LogsActivity` di `App\Models\BackupSchedule` | `updated` |
 | `octane` | aksi di `App\Filament\Pages\Octane` | `worker-dimuat-ulang` |
+
+**Sejak binafy/laravel-user-monitoring masuk, `activity_log` bukan satu-satunya jejak.** Login dan logout juga ditulis ke `authentications_monitoring`, dan halaman yang dibuka ditulis ke `visits_monitoring` — dua tabel terpisah dengan halaman panelnya sendiri. Yang perlu diingat saat menelusuri sebuah insiden: `failed` dan `lockout` **hanya** ada di sini, dan riwayat halaman **hanya** ada di sana. Lihat *Pemantauan Pengguna*.
 
 Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, pemberian dan pencabutan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
 
@@ -1615,6 +1628,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `ImageDriverConfigurationTest` | Dua tumpukan gambar memakai driver yang sama, nilainya diterima masing-masing paket, EXIF dibuang, dan berkas media mendarat di disk yang ikut backup |
 | `OctaneConfigurationTest` | Dua baris config yang membuat Octane aman: izin yang dicabut benar-benar dicabut lintas worker, dan restore backup terlihat oleh worker yang sudah terhubung. Dua tesnya memperagakan mekanismenya, bukan cuma mencocokkan nilai config |
 | `OctanePageTest` | Halaman `/admin/octane`: izinnya sendiri, tombol Muat Ulang butuh izin **kedua**, tombolnya mati saat server tidak jalan dan memanggilnya tidak menulis baris audit, muat ulang yang benar-benar jalan **sampai ke `activity_log` dan bisa disaring di panel**, config yang kembali ke bawaan dilaporkan `bad`, dan server mati **tidak** dilaporkan sebagai kegagalan |
+| `UserMonitoringAccessTest` | Enam rute publik milik paket benar-benar 404, tiap halaman pemantauan butuh izinnya sendiri, ketiganya read-only, kunjungan ke panel benar-benar tercatat, membaca halaman pemantauan **tidak** menambah baris, request XHR tidak dicatat, login sampai ke **dua** jejak sekaligus, dan perintah retensi benar-benar terjadwal |
 | `LogViewerAccessTest` | `/log-viewer` tertutup untuk tamu dan untuk pemegang `Access:AdminPanel`, terbuka dengan `View:LogViewer`, super-admin lolos lewat gate, membaca log **tidak** ikut memberi hak menghapusnya, `Delete:LogFile` sendirian bukan jalan masuk, dan tidak ada role bawaan yang mendapat keduanya |
 
 **Broadcasting, pengolahan gambar, spreadsheet, dan PDF belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan, belum ada berkas yang diolah, belum ada kelas export/import, dan belum ada template PDF — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
@@ -1653,6 +1667,9 @@ Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus k
 - `test_a_reused_connection_keeps_reading_the_pre_restore_file`: membuktikan koneksi yang dipakai ulang memegang inode lama setelah `rename()`. Ia berjalan di berkas sqlite sementara, jadi tidak menyentuh database tes maupun database aplikasi.
 - `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
 - `callTableAction` + `assertModelExists` di `TableActionAuthorizationTest`: menangkap tombol hapus yang lolos pengaman. Memanggil `canDelete()` saja tidak cukup.
+- `test_the_packages_own_pages_are_not_reachable`: menembak enam rute yang **seharusnya tidak ada**. Yang menahannya cuma keberadaan `routes/user-monitoring.php` yang isinya komentar; menghapus berkas itu — misalnya karena terlihat kosong dan tidak berguna — menghidupkan kembali tiga halaman publik tanpa autentikasi beserta tombol hapusnya, tanpa error apa pun.
+- `test_ajax_requests_are_not_recorded` dan `test_reading_the_monitoring_pages_does_not_record_visits`: keduanya menjaga hal yang tidak terlihat sebagai kerusakan melainkan sebagai **kebisingan**. Kembali ke bawaan paket membuat tiap ketikan di kolom pencarian Filament menulis baris kunjungan, dan membaca daftar kunjungan menambah baris ke daftar itu sendiri. Tidak ada yang error; datanya cuma berhenti berarti.
+- `test_logging_in_reaches_both_trails`: satu-satunya tes yang **sengaja menegaskan duplikasi**. `activity_log` dan `authentications_monitoring` sama-sama mencatat logout; kalau salah satu berhenti, tesnya menyebut jejak mana yang hilang. Lihat *Sesi Masuk memang duplikat*.
 - `test_the_log_viewer_is_closed_to_anonymous_visitors`: menembak `/log-viewer` **tanpa login**. Rute itu milik paket dan berdiri di luar panel, jadi tidak satu pun tes panel menyentuhnya — dan bawaan paketnya cuma menolak saat `APP_ENV=production`. Menghapus gate `viewLogViewer` di `AppServiceProvider` membuat halaman itu terbuka untuk siapa pun di dev dan staging, tanpa error apa pun. Tesnya menegaskan dulu bahwa `app()->isProduction()` `false`, supaya ia tidak hijau karena alasan yang salah.
 - `test_the_write_guard_never_runs_before_the_read_guard`: mengunci **urutan** middleware, bukan isinya. `AuthorizeLogViewerWrites` harus sesudah `AuthorizeLogViewer`; dibalik, pemegang `Delete:LogFile` tanpa `View:LogViewer` lolos dari gerbang baca. Urutan di array config tidak terlihat salah saat dibaca.
 
@@ -1805,6 +1822,139 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 - `->isoFormat('dddd, D MMMM YYYY')` → `Sabtu, 8 Agustus 2026`
 - `->diffForHumans()` → `3 hari yang lalu`
 
+## Pemantauan Pengguna (binafy/laravel-user-monitoring)
+
+Tiga jejak yang berbeda dari `activity_log`: **kunjungan** (halaman apa dibuka siapa), **aksi data** (CRUD per model), dan **sesi masuk** (login/logout beserta peramban). Versi 1.2.6.
+
+| Berkas | Isi |
+|---|---|
+| `config/user-monitoring.php` | Tabel, retensi, saklar tiap jenis pemantauan |
+| `routes/user-monitoring.php` | **Sengaja kosong.** Yang menonaktifkan UI bawaan paket |
+| `app/Filament/Resources/{Visit,Action,Authentication}Monitorings/` | UI pengganti, di dalam panel |
+| empat migrasi `*_monitoring*` | Dipublish ke repo, bukan dibiarkan di `vendor/` |
+
+### UI bawaannya tidak dipakai, dan itu bukan soal selera
+
+Bagian terpenting di bab ini. Paket ini mendaftarkan enam rutenya sendiri:
+
+```
+GET    /user-monitoring/visits-monitoring
+GET    /user-monitoring/actions-monitoring
+GET    /user-monitoring/authentications-monitoring
+DELETE /user-monitoring/{visits,actions,authentications}-monitoring/{id}
+```
+
+Keenamnya berjalan dengan middleware `web` **saja**. `BaseController` miliknya memakai trait `AuthorizesRequests` tapi tidak pernah memanggil `authorize()`, dan ketiga controllernya tidak mengecek apa pun. Artinya bawaan paket ini:
+
+- **Siapa pun, tanpa login,** bisa membaca IP, peramban, dan setiap halaman yang pernah dibuka tiap pengguna.
+- **Siapa pun, tanpa login,** bisa `DELETE` baris pemantauan — yaitu menghapus jejak kunjungannya sendiri.
+
+Lebih terbuka daripada log-viewer, yang setidaknya menolak di produksi. Ini tidak menolak di mana pun.
+
+Cara mematikannya memanfaatkan perilaku `LaravelUserMonitoringRouteServiceProvider`: ia memuat berkas yang ditunjuk `config.routes.file_path`, dan **hanya jatuh ke rute bawaannya kalau berkas itu tidak ada**. Jadi `routes/user-monitoring.php` di repo ini ada dan isinya cuma komentar.
+
+**Menghapus berkas itu mengembalikan keenam rute tadi.** Bukan error, bukan gejala apa pun — cuma tiga halaman publik yang tiba-tiba hidup lagi. Dikunci `test_the_packages_own_pages_are_not_reachable`, yang menembak keenamnya.
+
+### UI penggantinya: tiga resource read-only
+
+Grup navigasi **Pemantauan**, masing-masing dengan izinnya sendiri:
+
+| Menu | URL | Izin | Isi |
+|---|---|---|---|
+| Kunjungan | `/admin/visit-monitorings` | `ViewAny:VisitMonitoring` | Halaman panel yang dibuka, per pengguna |
+| Aksi Data | `/admin/action-monitorings` | `ViewAny:ActionMonitoring` | CRUD per model — **kosong**, lihat di bawah |
+| Sesi Masuk | `/admin/authentication-monitorings` | `ViewAny:AuthenticationMonitoring` | Login & logout + peramban |
+
+Ketiganya **read-only**: `canCreate()`, `canEdit()`, `canDelete()`, `canDeleteAny()` semuanya `false`, dan tidak ada halaman create/edit yang didaftarkan. Alasannya sama persis dengan `ActivityResource` — pemantauan yang bisa dihapus dari dalam panel adalah pemantauan yang bisa dihapus oleh orang yang sedang dipantau. Pembersihannya lewat perintah terjadwal, bukan tombol.
+
+Shield hanya membuat izin `viewAny` untuk ketiganya, disetel lewat `resources.manage` di `config/filament-shield.php`. Izin `view` tanpa halaman detail cuma centang yang tidak menjaga apa pun.
+
+**Tidak ada role bawaan yang mendapatkannya** — cuma `developer` (daftarnya dibaca dari tabel) dan `super-admin` (lewat gate). Alasannya sama dengan `View:Backups` yang ditahan dari `admin`: riwayat halaman per pengguna adalah data pribadi, bukan sesuatu yang ikut terbawa karena seseorang mengurus akun.
+
+### Pencatat kunjungan dipasang di panel, bukan di `web`
+
+`VisitMonitoringMiddleware` hanya dipasang paket pada rute bawaannya sendiri — yang di repo ini dikosongkan. **Tanpa mendaftarkannya sendiri, tidak ada satu pun kunjungan yang tercatat.**
+
+Di repo ini ia masuk ke `->middleware([...])` milik panel admin, bukan ke grup `web` global. Grup global akan ikut mencatat halaman welcome dan tiap rute publik yang lahir nanti; yang benar-benar layak dipantau di aplikasi ini cuma panelnya.
+
+**`ajax_requests` diubah ke `false`, dan itu wajib.** Filament berjalan di atas Livewire: tiap pengetikan di kolom pencarian, tiap ganti halaman tabel, tiap polling notifikasi adalah request XHR. Dengan bawaan `true`, satu menit seseorang mengetik di `/admin/users` menulis puluhan baris yang semuanya menunjuk halaman yang sama — dan kunjungan sungguhan yang mau dilihat terkubur di bawahnya. Dikunci `test_ajax_requests_are_not_recorded`.
+
+`except_pages` juga memuat ketiga halaman pemantauan itu sendiri, supaya membaca daftar kunjungan tidak menambah baris ke daftar yang sedang dibaca. Polanya dicocokkan ke `$request->path()` **secara penuh** (`*` jadi `.*`), jadi `admin/visit-monitorings` tanpa `*` tidak akan cocok dengan halaman kedua tabelnya.
+
+`guest_mode` dibiarkan `true`: kunjungan ke `/admin/login` sebelum siapa pun masuk tercatat tanpa pengguna, dan justru baris itu yang menarik.
+
+### Aksi Data kosong sampai ada yang mengisinya
+
+Tidak seperti dua yang lain, aksi **tidak** dicatat otomatis. Ia butuh trait `Binafy\LaravelUserMonitoring\Traits\Actionable` dipasang di model yang mau dipantau, dan **belum ada satu pun model yang memakainya**. Tabelnya ada, halamannya ada, isinya nol — dan tabelnya menjelaskan itu lewat empty state, bukan membiarkannya terbaca seperti bug.
+
+Sebelum memasang trait itu, sadari ia bertindih hampir sempurna dengan `LogsActivity` milik spatie yang sudah dipakai `User`, `Role`, `Permission`, dan `BackupSchedule`:
+
+| | Menjawab |
+|---|---|
+| `LogsActivity` (spatie) | **Apa** yang berubah — `attributes` + `old` |
+| `Actionable` (binafy) | **Dari mana** perubahannya datang — tabel, IP, peramban, perangkat |
+
+Memasang keduanya di satu model berarti dua baris di dua tabel untuk tiap simpan. Sah kalau memang butuh kedua jawaban; jangan dilakukan karena mengira yang satu menggantikan yang lain.
+
+### Sesi Masuk memang duplikat, dan itu keputusan sadar
+
+Kanal `auth` di `activity_log` **sudah** mencatat `login` dan `logout` — plus `failed` dan `lockout` yang paket ini tidak punya sama sekali. Yang ditambahkan `authentications_monitoring` cuma satu hal: peramban dan perangkat yang sudah diurai, sementara `activity_log` menyimpan user agent mentah di `properties`.
+
+Jadi tiap login sekarang menulis **dua baris di dua tabel**. Kalau itu tidak sepadan, matikan lewat `authentication_monitoring.on_login` / `on_logout` — Log Aktivitas tetap utuh dan halaman Sesi Masuk tinggal kosong.
+
+**Kebalikannya tidak berlaku.** Mematikan kanal `auth` akan menghilangkan `failed` dan `lockout`, dan tidak ada penggantinya di paket ini. Jangan tukar salah satu dengan yang lain.
+
+`test_logging_in_reaches_both_trails` sengaja menegaskan tumpang tindihnya: kalau salah satu berhenti menulis, tesnya menyebutkan jejak mana yang hilang.
+
+### Retensi — dan dua tabel yang tidak punya pembersih
+
+`visits_monitoring` tumbuh **per halaman dibuka**, bukan per perubahan data. Jauh lebih cepat daripada `activity_log`. Karena itu `delete_days` disetel 90 (bawaan paket `0` = tidak pernah dihapus).
+
+Angka itu tidak melakukan apa pun sendirian. Yang menghapus adalah perintahnya, dan ia sudah dijadwalkan di `routes/console.php`:
+
+```bash
+php artisan laravel-user-monitoring:remove-visit-monitoring-records   # harian 03:00
+```
+
+Jam 03:00 dipilih menjauh dari `activitylog:clean` (02:00) supaya keduanya tidak menyentuh `database.sqlite` bersamaan — pertimbangan yang sama dengan `backup:clean`.
+
+Dua jebakan:
+
+- **`delete_days => 0` membuat perintahnya menolak jalan.** Ia mencetak error lalu `return`, jadi jadwalnya tetap muncul di `schedule:list` sementara tabelnya tumbuh terus. Dikunci `test_the_visit_retention_command_is_scheduled`.
+- **Perintah itu hanya menyentuh visits.** `actions_monitoring` dan `authentications_monitoring` **tidak punya pembersih bawaan sama sekali**. Yang kedua tumbuh tiap login selamanya. Kalau nanti jadi masalah, itu perintah yang harus ditulis sendiri.
+
+### Kolom `platform` selalu sama dengan `device`
+
+Bug kecil di paketnya yang perlu diketahui sebelum seseorang mengira ada informasi tambahan di sana. Baik middleware maupun listener autentikasinya menulis:
+
+```php
+'platform' => $detector->getDevice(),
+'device'   => $detector->getDevice(),
+```
+
+Dua kolom, satu nilai. Tabel di panel karena itu hanya menampilkan `device`.
+
+### Produksi
+
+- **Jangan pernah menghapus `routes/user-monitoring.php`.** Itu satu-satunya hal yang menahan tiga halaman publik tanpa autentikasi. Kalau `composer update` menaikkan versi paketnya, jalankan `composer run test` — tesnya menembak keenam rutenya.
+- Jangan berikan ketiga izin `ViewAny:*Monitoring` secara bawaan. Riwayat halaman per pengguna adalah data pribadi.
+- Pastikan cron aktif, kalau tidak `visits_monitoring` tumbuh selamanya. Sama seperti `activitylog:clean`.
+- `use_reverse_proxy_ip` masih `false`. Di balik Nginx/Cloudflare, kolom `ip` akan berisi IP proxy, bukan pengunjung — nyalakan bersama `real_ip_header` yang benar, dan pastikan `TrustProxies` juga sudah benar.
+
+## Yang pernah dicoba dan dibuang
+
+### Login lewat Google (laravel/socialite)
+
+Pernah dipasang lengkap — controller, rute, tombol di halaman login, kolom `oauth_provider`/`oauth_id`, dan sepuluh tes — lalu **dicabut seluruhnya**. Satu-satunya pintu masuk panel sekarang tetap form email/password.
+
+Tiga hal yang ditemukan saat itu, dicatat supaya tidak perlu diturunkan ulang kalau OAuth suatu saat benar-benar dibutuhkan:
+
+- **Socialite tidak mengautentikasi siapa pun.** `->user()` mengembalikan profil dari penyedia dan berhenti; yang membuat sesi adalah `Auth::login()` yang ditulis sendiri. Berarti keamanan jalur ini seluruhnya kode aplikasi, bukan paketnya — dan bentuk yang beredar di hampir tiap contoh, `User::updateOrCreate(['email' => $googleUser->email])` lalu login, adalah pembuatan akun tanpa batas sekaligus pengambilalihan akun lewat alamat e-mail dalam dua baris.
+- **Identitasnya `oauth_id`, bukan alamat e-mail.** Alamat cuma dipakai sekali, untuk menemukan baris yang ditautkan pada login pertama. Sesudah itu id penyedia yang menentukan, kalau tidak akun Google kedua yang membawa alamat sama akan merebut baris yang sudah tertaut — dan penautan ulang diam-diam terlihat persis seperti login yang berhasil.
+- **`password` nullable bukan pilihan gaya.** Akun yang hanya masuk lewat penyedia tidak punya password; mengisinya dengan hash acak meninggalkan alur reset password sebagai jalan masuk kedua yang hidup ke akun yang tidak pernah dimaksudkan punya password. Masih teoretis selama panel ini belum punya `->passwordReset()`, dan berhenti teoretis di menit ia ditambahkan.
+
+Aturan yang dipakai saat itu **fail-closed**: akun penyedia tanpa baris di `users` ditolak, tidak dibuatkan. Kalau nanti dipasang lagi, mulai dari sana — bukan dari contoh di internet.
+
 ## Konvensi
 
 - Teks yang tampil ke user dibungkus `__()` supaya ikut locale, jangan hardcode di Blade.
@@ -1848,6 +1998,10 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 32. Jangan pernah mengomentari `DisconnectFromDatabases` di `config/octane.php` dan jangan kembalikan `permission.register_octane_reset_listener` ke `false`. Yang pertama membuat restore backup tidak terlihat oleh worker yang sudah terhubung; yang kedua membuat izin yang dicabut tetap berlaku sampai worker didaur ulang. Keduanya tanpa error, dan keduanya adalah bawaan paket — lihat *Dua default paket yang diubah*.
 33. Putuskan apakah `/log-viewer` memang perlu ada di produksi. Kalau tidak, `LOG_VIEWER_ENABLED=false` mencabut rutenya sama sekali — lebih rapat daripada mengandalkan izin. Kalau ya: jangan berikan `View:LogViewer` secara default (log produksi memuat isi request dan data pengguna sungguhan), dan `Delete:LogFile` lebih sedikit lagi — `storage/logs` tidak ada di arsip backup, jadi berkas yang dihapus lewat UI hilang selamanya dan penghapusannya **tidak tercatat di `activity_log`**.
 34. Pastikan gate `viewLogViewer` di `AppServiceProvider` masih ada. Tanpa gate itu, `AuthorizeLogViewer` bawaan paket hanya menolak di `APP_ENV=production` — di `staging` halaman itu terbuka untuk siapa pun tanpa login, dan tidak ada error apa pun yang menandainya. `LogViewerAccessTest` sudah merah lebih dulu.
+35. **Pastikan `routes/user-monitoring.php` ikut ter-deploy.** Berkas itu isinya cuma komentar, dan justru keberadaannya yang menahan tiga halaman publik milik binafy/laravel-user-monitoring — halaman yang memperlihatkan IP dan riwayat kunjungan tiap pengguna, plus tombol hapusnya, tanpa autentikasi sama sekali. Skrip deploy yang memangkas berkas "kosong" akan membukanya kembali tanpa gejala apa pun.
+36. Jangan berikan `ViewAny:VisitMonitoring`, `ViewAny:ActionMonitoring`, atau `ViewAny:AuthenticationMonitoring` secara bawaan — riwayat halaman per pengguna adalah data pribadi, bukan bagian dari mengurus akun.
+37. Nyalakan `user-monitoring.action_monitoring.use_reverse_proxy_ip` (beserta `real_ip_header` yang benar) kalau aplikasi berdiri di balik Nginx atau Cloudflare. Tanpa itu kolom `ip` di seluruh tabel pemantauan berisi alamat proxy, sama untuk semua orang — datanya tetap terkumpul dan tetap tidak berguna.
+38. Pastikan cron aktif untuk `laravel-user-monitoring:remove-visit-monitoring-records` (harian 03:00). `visits_monitoring` tumbuh per halaman dibuka, dan dua tabel pemantauan lainnya **tidak punya pembersih sama sekali**.
 
 ## Verifikasi cepat
 
@@ -1892,7 +2046,7 @@ Output yang diharapkan:
 
 ```
 model-role: App\Models\Role
-izin: Access:AdminPanel, Create:Role, Create:User, Delete:LogFile, Delete:Role, Delete:User, Reload:Octane, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:LogViewer, View:Octane, View:Role, View:User, ViewAny:Activity, ViewAny:Role, ViewAny:User
+izin: Access:AdminPanel, Create:Role, Create:User, Delete:LogFile, Delete:Role, Delete:User, Reload:Octane, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:LogViewer, View:Octane, View:Role, View:User, ViewAny:ActionMonitoring, ViewAny:Activity, ViewAny:AuthenticationMonitoring, ViewAny:Role, ViewAny:User, ViewAny:VisitMonitoring
 role: admin, developer, guru, karyawan, murid, super-admin
 admin-role: super-admin
 akses-panel: true
@@ -2098,3 +2252,36 @@ Enam rute destruktif itulah yang dijaga `Delete:LogFile`. Kalau angkanya naik se
 `AuthorizeLogViewerWrites` harus berada **sesudah** `AuthorizeLogViewer`, bukan sebelum — kalau urutannya terbalik, pemegang `Delete:LogFile` tanpa `View:LogViewer` lolos dari gerbang baca.
 
 `include` yang memuat `/var/log/...` berarti config-nya kembali ke bawaan paket; baca *Dua nilai config yang diubah dari bawaan paket* sebelum membiarkannya.
+
+### Pemantauan Pengguna
+
+```bash
+php artisan config:clear
+php artisan tinker --execute='
+echo "rute publik : ".count(collect(Illuminate\Support\Facades\Route::getRoutes())->filter(fn ($r) => str_starts_with($r->uri(), "user-monitoring")))." (WAJIB 0)".PHP_EOL;
+echo "berkas rute : ".(file_exists(base_path(config("user-monitoring.config.routes.file_path"))) ? "ada" : "HILANG — rute bawaan paket aktif kembali").PHP_EOL;
+echo "ajax        : ".var_export(config("user-monitoring.visit_monitoring.ajax_requests"), true)." (harus false di panel Livewire)".PHP_EOL;
+echo "retensi     : ".config("user-monitoring.visit_monitoring.delete_days")." hari".PHP_EOL;
+echo "proxy ip    : ".var_export(config("user-monitoring.action_monitoring.use_reverse_proxy_ip"), true).PHP_EOL;
+echo "baris       : kunjungan ".DB::table("visits_monitoring")->count().", aksi ".DB::table("actions_monitoring")->count().", sesi ".DB::table("authentications_monitoring")->count().PHP_EOL;
+'
+php artisan schedule:list | grep monitoring
+```
+
+Output yang diharapkan pada instalasi baru:
+
+```
+rute publik : 0 (WAJIB 0)
+berkas rute : ada
+ajax        : false (harus false di panel Livewire)
+retensi     : 90 hari
+proxy ip    : false
+baris       : kunjungan 0, aksi 0, sesi 0
+0 3 * * * php artisan laravel-user-monitoring:remove-visit-monitoring-records
+```
+
+**`rute publik` selain 0 adalah temuan paling gawat di seluruh dokumen ini.** Artinya `routes/user-monitoring.php` hilang dan paket kembali memasang halamannya sendiri: tiga halaman yang memperlihatkan IP serta riwayat kunjungan tiap pengguna, dan tiga rute `DELETE`, semuanya tanpa autentikasi. `UserMonitoringAccessTest` sudah merah lebih dulu.
+
+`aksi 0` bukan kerusakan — tabel itu memang kosong sampai ada model yang memakai trait `Actionable`. Lihat *Aksi Data kosong sampai ada yang mengisinya*.
+
+`baris kunjungan 0` di instalasi yang sudah dipakai berarti sebaliknya: `VisitMonitoringMiddleware` tidak lagi terdaftar di `AdminPanelProvider`. Paketnya tidak memasangnya di mana pun selain rute bawaannya, jadi tanpa baris itu tidak ada yang tercatat — dan halamannya tetap tampil normal, cuma selalu kosong.
