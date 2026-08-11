@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Listeners\LogAuthenticationActivity;
 use App\Listeners\LogAuthorizationChanges;
+use App\Models\User;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
@@ -62,6 +63,21 @@ class AppServiceProvider extends ServiceProvider
         // returning false short-circuits the gate and denies permissions the
         // user legitimately holds. Locked by
         // `test_a_non_super_admin_keeps_its_own_permissions`.
+
+        // opcodesio/log-viewer serves /log-viewer from its own routes, outside
+        // the Filament panel, so Access:AdminPanel never sees the request. Its
+        // own middleware only aborts when the app is in production AND no gate
+        // exists — meaning that without this line the page is wide open to
+        // anonymous visitors on local and staging, stack traces and all.
+        //
+        // The type hint is deliberately non-nullable: Laravel skips the
+        // callback for guests and denies, which is the answer we want. Shield's
+        // Gate::before still lets super-admin through ahead of this.
+        //
+        // Reading is all this grants. The destructive log-viewer API routes are
+        // held back by AuthorizeLogViewerWrites on a second permission, the
+        // same split as View:Backups vs Restore:Backup.
+        Gate::define('viewLogViewer', fn (User $user): bool => $user->can('View:LogViewer'));
 
         // Laravel discovers policies by naming convention: App\Models\Foo ->
         // App\Policies\FooPolicy. ActivityPolicy breaks that convention

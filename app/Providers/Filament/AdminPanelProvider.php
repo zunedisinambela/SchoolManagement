@@ -7,10 +7,12 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Navigation\NavigationItem;
 use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\Support\Icons\Heroicon;
 use Filament\Widgets\AccountWidget;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
@@ -35,6 +37,26 @@ class AdminPanelProvider extends PanelProvider
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
             ->pages([
                 Dashboard::class,
+            ])
+            /*
+             * Log Viewer bukan halaman Filament — rutenya milik
+             * opcodesio/log-viewer dan berdiri di luar panel. Yang ada di sini
+             * cuma tautannya, supaya menunya tetap ketemu dari tempat yang
+             * sama dengan Backup dan Octane.
+             *
+             * `visible()` di sini murni kosmetik: yang benar-benar menjaga
+             * halamannya adalah gate `viewLogViewer` di AppServiceProvider.
+             * Menyembunyikan tautan tanpa gate itu tidak menutup apa pun —
+             * URL-nya bisa diketik langsung.
+             */
+            ->navigationItems([
+                NavigationItem::make('log-viewer')
+                    ->label(__('Log Viewer'))
+                    ->icon(Heroicon::OutlinedDocumentMagnifyingGlass)
+                    ->url(fn (): string => url((string) config('log-viewer.route_path')), shouldOpenInNewTab: true)
+                    ->visible(fn (): bool => (bool) config('log-viewer.enabled')
+                        && (bool) auth()->user()?->can('View:LogViewer'))
+                    ->sort(87),
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([

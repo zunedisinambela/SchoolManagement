@@ -20,10 +20,13 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Spreadsheet | maatwebsite/excel 3.1 (membawa phpoffice/phpspreadsheet 1.30) |
 | PDF | barryvdh/laravel-dompdf 3.1 (membawa dompdf/dompdf 3.1) |
 | Server aplikasi | laravel/octane 2.18 + FrankenPHP (opsional, belum dipakai `composer run dev`) |
+| Pembaca log | opcodesio/log-viewer 3.24 di `/log-viewer` |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, halaman status Octane, serta lima fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, spreadsheet yang belum punya satu kelas export maupun import, dan PDF yang belum punya satu template.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, halaman status Octane, pembaca log di `/log-viewer`, serta lima fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, spreadsheet yang belum punya satu kelas export maupun import, dan PDF yang belum punya satu template.
+
+Log Viewer masuk kategori Octane, bukan kategori lima fondasi itu: ia **langsung berfungsi begitu terpasang**, karena log yang dibacanya sudah ada sejak hari pertama. Yang perlu diketahui tentangnya bukan cara memakainya melainkan siapa yang boleh — rutenya berdiri di luar panel, jadi tidak satu pun pengaman Filament menyentuhnya. Lihat *Log Viewer*.
 
 Octane berdiri di kategori lain. Ia bukan fondasi yang menunggu dipakai melainkan **cara aplikasi ini dijalankan** — dan memasangnya sudah mengubah dua baris config demi kebenaran, bukan demi kecepatan. Belum dijadikan default: `composer run dev` masih memakai `php artisan serve`, jadi halaman `/admin/octane` melaporkan "server tidak jalan" di pengembangan dan itu memang jawaban yang benar. Lihat *Octane*.
 
@@ -32,6 +35,8 @@ Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul ap
 Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, `backup_schedules`, dan `media`.
 
 Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/activities`, `/admin/backups`, `/admin/octane`. (`/admin/permissions` sudah tidak ada — izin kini dicentang di dalam editor Role milik filament-shield.)
+
+Satu menu di panel **bukan** halaman panel: **Log Viewer** cuma `NavigationItem` yang menunjuk ke `/log-viewer`, rute milik `opcodesio/log-viewer` di luar Filament. Konsekuensinya dibahas di *Log Viewer* — yang terpenting, `Access:AdminPanel` tidak menjaganya.
 
 ## Perintah
 
@@ -51,6 +56,9 @@ php artisan media-library:clean --dry-run   # daftar berkas media yatim
 php artisan make:export SiswaExport --model=Siswa   # kelas export spreadsheet
 php artisan make:import SiswaImport --model=Siswa   # kelas import spreadsheet
 php artisan vendor:publish --provider="Barryvdh\DomPDF\ServiceProvider"   # config/dompdf.php
+# log-viewer TIDAK punya perintah yang perlu dijalankan. `log-viewer:publish`
+# ada tapi statusnya deprecated — sejak 3.x asetnya disajikan dari vendor/,
+# jadi jangan masukkan ke skrip deploy seperti `filament:assets`.
 php artisan backup:run    # buat arsip backup sekarang
 php artisan backup:list   # daftar arsip + status sehat/tidak
 # restore: lewat tombol Pulihkan di /admin/backups, atau langkah CLI di bagian Restore
@@ -131,7 +139,7 @@ php artisan shield:generate --resource=SiswaResource --option=permissions
 php artisan shield:super-admin --user=1
 ```
 
-Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Tujuh belas izin yang ada sekarang:
+Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Sembilan belas izin yang ada sekarang:
 
 | Sumber | Izin |
 |---|---|
@@ -140,9 +148,11 @@ Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `per
 | `ActivityResource` | `ViewAny:Activity`, `View:Activity` |
 | `Backups` (page) | `View:Backups` |
 | `Octane` (page) | `View:Octane` |
-| kustom | `Access:AdminPanel`, `Restore:Backup`, `Reload:Octane` |
+| kustom | `Access:AdminPanel`, `Restore:Backup`, `Reload:Octane`, `View:LogViewer`, `Delete:LogFile` |
 
-**Tiga izin kustom, dan tidak satu pun kelalaian.** Tidak ada model di balik "panel itu sendiri", di balik "memulihkan arsip", maupun di balik "memuat ulang worker", jadi ketiganya dideklarasikan di `custom_permissions` pada config. Agar bisa dicentang lewat UI, `shield_resource.tabs.custom_permissions` harus `true` — bawaan paketnya `false`, dan dengan itu `Restore:Backup` serta `Reload:Octane` tidak akan pernah bisa diberikan lewat panel.
+**Lima izin kustom, dan tidak satu pun kelalaian.** Tidak ada model di balik "panel itu sendiri", di balik "memulihkan arsip", di balik "memuat ulang worker", maupun di balik halaman yang rutenya milik paket lain, jadi kelimanya dideklarasikan di `custom_permissions` pada config. Agar bisa dicentang lewat UI, `shield_resource.tabs.custom_permissions` harus `true` — bawaan paketnya `false`, dan dengan itu `Restore:Backup`, `Reload:Octane`, `View:LogViewer`, serta `Delete:LogFile` tidak akan pernah bisa diberikan lewat panel.
+
+Dua yang terakhir berbeda sifat dari tiga yang pertama: `View:LogViewer` dan `Delete:LogFile` menjaga halaman yang **tidak ada di dalam panel sama sekali**. Rutenya milik `opcodesio/log-viewer`, terdaftar di luar Filament, jadi tidak ada `canAccess()` maupun policy yang bisa menyentuhnya — yang menjaganya sebuah `Gate::define` di `AppServiceProvider`. Lihat bagian *Log Viewer*.
 
 **Daftar method dipangkas per resource.** Bawaan Shield membuat 13 izin per resource, termasuk `Restore`, `ForceDelete`, `Replicate`, dan `Reorder` yang tidak punya tombol di panel ini. `resources.manage` di config memangkasnya — tapi hanya kalau **`policies.merge` `false`**. Dengan `true` (bawaan paket) daftar itu di-`array_merge` dengan daftar default, jadi ia menambah alih-alih mengganti. Tidak ada error; satu-satunya gejalanya jumlah izin yang tidak turun.
 
@@ -1477,6 +1487,113 @@ Yang berbeda dari Reverb: setelah deploy, kode baru **tidak** terpakai sampai wo
 
 `garbage` di config (50 MB) memicu GC saat pemakaian memori melewatinya. Kalau memori worker tumbuh terus melewati ambang itu, penyebabnya hampir selalu state yang menumpuk di singleton, bukan Octane-nya.
 
+## Log Viewer (opcodesio/log-viewer)
+
+Pembaca `storage/logs` lewat browser: daftar berkas, pencarian, filter level, dan stack trace yang bisa dilipat. Versi 3.24.2, di `/log-viewer`. Berbeda dari Reverb, intervention, laravel-excel, dan dompdf, ia **langsung berfungsi begitu terpasang** — tidak ada fondasi yang menunggu dipakai, karena log-nya memang sudah ada sejak hari pertama.
+
+| Berkas | Isi |
+|---|---|
+| `config/log-viewer.php` | Rute, middleware, pola berkas, default UI |
+| `app/Http/Middleware/AuthorizeLogViewerWrites.php` | Pemisah izin baca dan izin hapus |
+| `.env` → `LOG_VIEWER_ENABLED` | `true`. `false` mencabut rutenya sama sekali |
+
+Tidak ada asset yang perlu dipublish: sejak 3.x berkasnya disajikan langsung dari `vendor/`. `php artisan log-viewer:publish` masih ada tapi statusnya deprecated — jangan dipanggil di skrip deploy.
+
+### Rutenya di luar panel, dan itu mengubah siapa yang menjaganya
+
+Ini hal terpenting di bab ini. `LogViewerServiceProvider` mendaftarkan rutenya sendiri:
+
+```
+GET    /log-viewer/{view?}                          halaman
+GET    /log-viewer/api/hosts|folders|files|logs     pembacaan
+GET    /log-viewer/api/{files,folders}/{id}/download    unduh (bertanda tangan)
+DELETE /log-viewer/api/files/{id}                   hapus berkas
+DELETE /log-viewer/api/folders/{id}                 hapus folder
+POST   /log-viewer/api/delete-multiple-files        hapus banyak
+POST   /log-viewer/api/files/{id}/clear-cache       buang cache satu berkas
+POST   /log-viewer/api/folders/{id}/clear-cache     buang cache satu folder
+POST   /log-viewer/api/clear-cache-all              buang seluruh cache indeks
+```
+
+Lima belas rute, enam di antaranya mengubah sesuatu (empat baris terbawah plus kedua `DELETE`). Rute unduh bertanda tangan (`ValidateSignature`) tapi tetap lewat `api_middleware` yang sama, jadi izin bacanya tetap berlaku — tanda tangan itu menjaga tautannya dari diubah, bukan menggantikan otorisasi.
+
+Tidak satu pun lewat Filament. `Access:AdminPanel` tidak menjaganya, `canAccess()` tidak berlaku, dan policy tidak pernah ditanya. Kelas bug yang sama dengan channel broadcasting dan rute PDF: **pengaman di satu lapis tidak ikut ke lapis lain.**
+
+**Bawaannya terbuka untuk siapa saja di luar produksi.** `AuthorizeLogViewer` milik paket hanya menolak kalau `require_auth_in_production` **dan** `App::isProduction()` **dan** tidak ada gate — jadi di `local` maupun `staging`, tanpa gate yang didefinisikan, `/log-viewer` bisa dibuka tanpa login sama sekali. Isinya stack trace, query, dan payload request.
+
+Karena itu `AppServiceProvider::boot()` mendefinisikan gate-nya:
+
+```php
+Gate::define('viewLogViewer', fn (User $user): bool => $user->can('View:LogViewer'));
+```
+
+Tipe parameternya sengaja **tidak nullable**: Laravel melewatkan callback untuk tamu lalu menolak, dan itu jawaban yang benar. `super-admin` tetap lolos lewat `Gate::before` milik shield, tanpa perlu dikecualikan.
+
+Konsekuensinya tamu mendapat **403, bukan halaman login**. Itu disengaja: tidak ada rute bernama `login` di aplikasi ini (Filament memakai `filament.admin.auth.login`), jadi middleware `auth` justru akan melempar exception "Route [login] not defined" alih-alih mengalihkan. Menambahkannya butuh `Authenticate::redirectUsing()` sendiri.
+
+### Satu gerbang untuk membaca dan menghapus — dipisah sendiri
+
+Paketnya cuma punya `viewLogViewer`, dan gerbang itu menjaga seluruh API termasuk rute yang menghapus berkas. Artinya bawaannya: **siapa pun yang boleh membaca log, boleh menghapusnya.**
+
+Menghapus log adalah satu-satunya aksi di paket ini yang tidak punya jalan pulang. `storage/logs` **tidak ada di `backup.source.files.include`** — dan itu benar, log bukan sesuatu yang layak diarsipkan — tapi artinya berkas yang dihapus lewat UI hilang untuk selamanya, termasuk jejak insiden yang justru sedang diselidiki.
+
+Repo ini memisahkannya lewat `App\Http\Middleware\AuthorizeLogViewerWrites`, terdaftar di `api_middleware` **setelah** `AuthorizeLogViewer`. Urutan itu bukan selera: gerbang baca berjalan lebih dulu, jadi pemegang `Delete:LogFile` tanpa `View:LogViewer` tetap ditolak di pintu pertama.
+
+| Izin | Membuka |
+|---|---|
+| `View:LogViewer` | Halaman dan seluruh rute GET |
+| `View:LogViewer` + `Delete:LogFile` | Ditambah hapus berkas, hapus folder, dan buang cache |
+
+Pola yang sama dengan `View:Backups` versus `Restore:Backup` dan `View:Octane` versus `Reload:Octane`.
+
+**Yang dianggap destruktif ditentukan dari method HTTP, bukan dari daftar nama rute** — `! $request->isMethodSafe()`, jadi setiap non-GET butuh izin kedua. Menyebut keenam nama rutenya akan lebih presisi dan **gagal terbuka**: rute destruktif yang ditambahkan rilis log-viewer berikutnya tidak ada di daftar, lolos begitu saja, dan tidak ada tes yang merah. Taruhan yang sama dengan `match` tanpa `default` di `MaximumAgeMatchingSchedule` — salah dengan berisik lebih baik daripada permisif dengan diam.
+
+Harganya kebalikannya: POST tidak berbahaya yang suatu saat ditambahkan paketnya (menyimpan preferensi UI, misalnya) akan ikut butuh `Delete:LogFile`. Itu muncul sebagai 403 yang dilaporkan orang, bukan sebagai akses yang tidak disadari siapa pun. `isMethodSafe()` juga mencakup OPTIONS, jadi preflight CORS tidak ikut terjaring.
+
+**Tombolnya tidak ikut disembunyikan.** UI log-viewer adalah aplikasi Vue yang sudah dikompilasi dan tidak tahu-menahu soal izin kedua ini, jadi pemegang `View:LogViewer` saja tetap melihat tombol Hapus lalu mendapat 403 saat menekannya. Tidak menyenangkan, tapi aman — alternatifnya mem-fork frontend paketnya.
+
+### Tidak ada role bawaan yang mendapatkannya
+
+Kedua izin itu tidak ada di `Role::permissions()` mana pun. Yang memegangnya cuma `developer` (daftarnya dibaca dari tabel) dan `super-admin` (lewat gate).
+
+Alasannya sama dengan `View:Backups` yang ditahan dari `admin`: log Laravel memuat isi request, alamat e-mail, dan stack trace berisi apa pun yang sedang diproses saat error terjadi — termasuk nilai yang tidak pernah boleh muncul di `activity_log`. Berikan saat dibutuhkan, cabut setelahnya. Dikunci `test_no_baseline_role_but_developer_receives_the_log_permissions`.
+
+### Tautan di panel, bukan halaman panel
+
+Menu **Log Viewer** (`$navigationSort` 87, di antara Octane dan Log Aktivitas) adalah `NavigationItem` di `AdminPanelProvider`, bukan `Filament\Pages\Page`. Ia membuka tab baru ke `/log-viewer`.
+
+`->visible()` di sana **murni kosmetik** — yang menjaga halamannya gate di atas. Menyembunyikan tautan tanpa gate tidak menutup apa pun; URL-nya bisa diketik langsung.
+
+Jangan tertukar dengan **Log Aktivitas** (`/admin/activities`): yang itu jejak audit siapa melakukan apa, resource Eloquent di dalam panel. Log Viewer membaca berkas log framework. Dua hal berbeda yang namanya mirip.
+
+### Dua nilai config yang diubah dari bawaan paket
+
+**1. `include_files` dipangkas ke log aplikasi saja.** Bawaannya juga memuat `/var/log/nginx/*` dan `/var/log/httpd/*`. Access log web server berisi IP dan URL lengkap tiap pengunjung — data yang tidak ada di log Laravel dan memperluas permukaan halaman ini diam-diam. Kalau memang perlu, kembalikan barisnya secara sadar; formatnya `'/var/log/nginx/*' => 'Nginx'`, nilainya jadi nama folder di UI. Ingat prosesnya harus punya izin baca ke sana — PHP-FPM biasanya tidak, dan gejalanya folder kosong, bukan error.
+
+**2. `back_to_system_url` menunjuk `/admin`, bukan `APP_URL`.** Panel admin satu-satunya UI di sini; `/` masih halaman welcome bawaan Laravel.
+
+### Cache indeks, dan hubungannya dengan Octane
+
+Log-viewer membangun indeks tiap berkas dan menyimpannya di cache store (`cache_driver`, bawaannya `null` = ikut `CACHE_STORE`). Itu yang membuat navigasi berkas 100 MB tetap cepat.
+
+Konsekuensinya dua:
+
+- **Cache basi setelah berkas log dirotasi atau diganti.** Tombol *Clear cache* di UI ada untuk itu, dan sejak ada `AuthorizeLogViewerWrites` ia butuh `Delete:LogFile`.
+- **Di bawah Octane tidak ada masalah state khusus.** Paketnya tidak menyimpan apa pun di properti statis lintas request — indeksnya di cache store, bukan di memori worker. Ini kebalikan dari `PermissionRegistrar`; lihat *Dua default paket yang diubah*.
+
+### Belum tercatat di audit log
+
+Membaca log tidak dicatat, dan **menghapus berkas log juga tidak**. Yang kedua itu celah yang nyata: ia menghapus bukti secara permanen dan tidak meninggalkan satu baris pun di `activity_log`.
+
+Menambalnya tidak bisa lewat trait — tidak ada model yang terlibat. Tempatnya `AuthorizeLogViewerWrites`, yang sudah melihat tiap permintaan destruktif beserta pelakunya: catat manual satu baris di kanal baru (`log-viewer`) seperti `Backups::download()` melakukannya, lalu **tambahkan nama event-nya ke kedua daftar di `ActivitiesTable`** — lihat *Opsi filter Aksi ditulis tangan*.
+
+### Produksi
+
+- **Jangan berikan `View:LogViewer` secara default**, dan `Delete:LogFile` lebih sedikit lagi. Log produksi memuat data pengguna sungguhan.
+- **`LOG_VIEWER_ENABLED=false` mencabut rutenya sama sekali.** Cara paling cepat menutup halaman ini tanpa menyentuh izin, dan yang paling layak dipakai kalau tidak ada yang benar-benar memerlukannya.
+- Berkas log tumbuh tanpa batas dengan `LOG_STACK=single`. Log-viewer membacanya, tidak merotasinya — pertimbangkan `LOG_CHANNEL=daily` atau logrotate, karena berkas tunggal berukuran giga membuat pembangunan indeks pertama sangat lambat.
+- `storage/logs` **tidak** ikut arsip backup, dan itu disengaja.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -1498,6 +1615,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `ImageDriverConfigurationTest` | Dua tumpukan gambar memakai driver yang sama, nilainya diterima masing-masing paket, EXIF dibuang, dan berkas media mendarat di disk yang ikut backup |
 | `OctaneConfigurationTest` | Dua baris config yang membuat Octane aman: izin yang dicabut benar-benar dicabut lintas worker, dan restore backup terlihat oleh worker yang sudah terhubung. Dua tesnya memperagakan mekanismenya, bukan cuma mencocokkan nilai config |
 | `OctanePageTest` | Halaman `/admin/octane`: izinnya sendiri, tombol Muat Ulang butuh izin **kedua**, tombolnya mati saat server tidak jalan dan memanggilnya tidak menulis baris audit, muat ulang yang benar-benar jalan **sampai ke `activity_log` dan bisa disaring di panel**, config yang kembali ke bawaan dilaporkan `bad`, dan server mati **tidak** dilaporkan sebagai kegagalan |
+| `LogViewerAccessTest` | `/log-viewer` tertutup untuk tamu dan untuk pemegang `Access:AdminPanel`, terbuka dengan `View:LogViewer`, super-admin lolos lewat gate, membaca log **tidak** ikut memberi hak menghapusnya, `Delete:LogFile` sendirian bukan jalan masuk, dan tidak ada role bawaan yang mendapat keduanya |
 
 **Broadcasting, pengolahan gambar, spreadsheet, dan PDF belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan, belum ada berkas yang diolah, belum ada kelas export/import, dan belum ada template PDF — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
 
@@ -1535,6 +1653,8 @@ Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus k
 - `test_a_reused_connection_keeps_reading_the_pre_restore_file`: membuktikan koneksi yang dipakai ulang memegang inode lama setelah `rename()`. Ia berjalan di berkas sqlite sementara, jadi tidak menyentuh database tes maupun database aplikasi.
 - `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
 - `callTableAction` + `assertModelExists` di `TableActionAuthorizationTest`: menangkap tombol hapus yang lolos pengaman. Memanggil `canDelete()` saja tidak cukup.
+- `test_the_log_viewer_is_closed_to_anonymous_visitors`: menembak `/log-viewer` **tanpa login**. Rute itu milik paket dan berdiri di luar panel, jadi tidak satu pun tes panel menyentuhnya — dan bawaan paketnya cuma menolak saat `APP_ENV=production`. Menghapus gate `viewLogViewer` di `AppServiceProvider` membuat halaman itu terbuka untuk siapa pun di dev dan staging, tanpa error apa pun. Tesnya menegaskan dulu bahwa `app()->isProduction()` `false`, supaya ia tidak hijau karena alasan yang salah.
+- `test_the_write_guard_never_runs_before_the_read_guard`: mengunci **urutan** middleware, bukan isinya. `AuthorizeLogViewerWrites` harus sesudah `AuthorizeLogViewer`; dibalik, pemegang `Delete:LogFile` tanpa `View:LogViewer` lolos dari gerbang baca. Urutan di array config tidak terlihat salah saat dibaca.
 
 Menulis tes halaman Filament pakai Livewire, bukan HTTP:
 
@@ -1726,6 +1846,8 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 30. **Tambahkan `php artisan octane:reload` ke skrip deploy.** Worker menahan kode lama di memori; tanpa reload, deploy yang sukses menyajikan versi sebelumnya tanpa gejala apa pun. Ia tidak memuat ulang queue worker — `php artisan queue:restart` tetap perlu sendiri.
 31. Buka `/admin/octane` sekali setelah deploy. Halaman itu memeriksa keempat hal di bagian *Verifikasi cepat → Octane* sekaligus, termasuk apakah request yang sedang dilayani benar-benar lewat worker Octane — cara paling cepat menangkap `octane:reload` yang terlewat di skrip deploy. Jangan berikan `Reload:Octane` secara default; pemegangnya bisa mendaur ulang worker yang sedang menyajikan panel.
 32. Jangan pernah mengomentari `DisconnectFromDatabases` di `config/octane.php` dan jangan kembalikan `permission.register_octane_reset_listener` ke `false`. Yang pertama membuat restore backup tidak terlihat oleh worker yang sudah terhubung; yang kedua membuat izin yang dicabut tetap berlaku sampai worker didaur ulang. Keduanya tanpa error, dan keduanya adalah bawaan paket — lihat *Dua default paket yang diubah*.
+33. Putuskan apakah `/log-viewer` memang perlu ada di produksi. Kalau tidak, `LOG_VIEWER_ENABLED=false` mencabut rutenya sama sekali — lebih rapat daripada mengandalkan izin. Kalau ya: jangan berikan `View:LogViewer` secara default (log produksi memuat isi request dan data pengguna sungguhan), dan `Delete:LogFile` lebih sedikit lagi — `storage/logs` tidak ada di arsip backup, jadi berkas yang dihapus lewat UI hilang selamanya dan penghapusannya **tidak tercatat di `activity_log`**.
+34. Pastikan gate `viewLogViewer` di `AppServiceProvider` masih ada. Tanpa gate itu, `AuthorizeLogViewer` bawaan paket hanya menolak di `APP_ENV=production` — di `staging` halaman itu terbuka untuk siapa pun tanpa login, dan tidak ada error apa pun yang menandainya. `LogViewerAccessTest` sudah merah lebih dulu.
 
 ## Verifikasi cepat
 
@@ -1770,7 +1892,7 @@ Output yang diharapkan:
 
 ```
 model-role: App\Models\Role
-izin: Access:AdminPanel, Create:Role, Create:User, Delete:Role, Delete:User, Reload:Octane, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:Octane, View:Role, View:User, ViewAny:Activity, ViewAny:Role, ViewAny:User
+izin: Access:AdminPanel, Create:Role, Create:User, Delete:LogFile, Delete:Role, Delete:User, Reload:Octane, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:LogViewer, View:Octane, View:Role, View:User, ViewAny:Activity, ViewAny:Role, ViewAny:User
 role: admin, developer, guru, karyawan, murid, super-admin
 admin-role: super-admin
 akses-panel: true
@@ -1943,3 +2065,36 @@ for i in 1 2 3; do curl -s -o /dev/null -w "req$i status=%{http_code} %{time_tot
 ```
 
 Request pertama selalu paling lambat karena worker baru boot; request berikutnya turun tajam — di mesin ini 0.16s lalu 0.02s. **Kalau request ke-2 dan ke-3 tidak lebih cepat, Octane tidak benar-benar menahan aplikasi di memori** dan ada yang mem-boot ulang tiap request.
+
+### Log Viewer
+
+```bash
+php artisan config:clear
+php artisan tinker --execute='
+echo "aktif    : ".var_export(config("log-viewer.enabled"), true)." | path: /".config("log-viewer.route_path").PHP_EOL;
+echo "gate     : ".var_export(Illuminate\Support\Facades\Gate::has("viewLogViewer"), true)." (tanpa ini halaman terbuka di luar produksi)".PHP_EOL;
+echo "izin     : ".App\Models\Permission::whereIn("name", ["View:LogViewer", "Delete:LogFile"])->pluck("name")->implode(", ").PHP_EOL;
+echo "penjaga  : ".implode(", ", array_map(fn ($m) => class_basename($m), config("log-viewer.api_middleware"))).PHP_EOL;
+echo "include  : ".implode(", ", array_keys(array_flip(config("log-viewer.include_files")))).PHP_EOL;
+'
+php artisan route:list --path=log-viewer --json | php -r 'printf("rute     : %d (%d di antaranya destruktif)%s", count($r = json_decode(stream_get_contents(STDIN), true)), count(array_filter($r, fn ($x) => in_array($x["method"] ?? "", ["DELETE", "POST"]) || str_contains($x["method"] ?? "", "DELETE"))), PHP_EOL);'
+```
+
+Output yang diharapkan:
+
+```
+aktif    : true | path: /log-viewer
+gate     : true (tanpa ini halaman terbuka di luar produksi)
+izin     : Delete:LogFile, View:LogViewer
+penjaga  : EnsureFrontendRequestsAreStateful, AuthorizeLogViewer, AuthorizeLogViewerWrites
+include  : *.log, **/*.log
+rute     : 15 (6 di antaranya destruktif)
+```
+
+Enam rute destruktif itulah yang dijaga `Delete:LogFile`. Kalau angkanya naik setelah `composer update`, paketnya menambah rute yang mengubah sesuatu — periksa apakah `AuthorizeLogViewerWrites::mutates()` masih mengenalinya.
+
+`gate : false` adalah temuan paling penting di blok ini: gate-nya hilang berarti `AuthorizeLogViewer` bawaan paket cuma menolak saat `APP_ENV=production`, dan di lingkungan lain `/log-viewer` terbuka tanpa login sama sekali.
+
+`AuthorizeLogViewerWrites` harus berada **sesudah** `AuthorizeLogViewer`, bukan sebelum — kalau urutannya terbalik, pemegang `Delete:LogFile` tanpa `View:LogViewer` lolos dari gerbang baca.
+
+`include` yang memuat `/var/log/...` berarti config-nya kembali ke bawaan paket; baca *Dua nilai config yang diubah dari bawaan paket* sebelum membiarkannya.

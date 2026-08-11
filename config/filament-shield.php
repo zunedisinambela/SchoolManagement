@@ -336,7 +336,7 @@ return [
     */
 
     /*
-     * Tiga izin yang tidak lahir dari resource, page, atau widget mana pun.
+     * Lima izin yang tidak lahir dari resource, page, atau widget mana pun.
      *
      * `access:admin_panel` menjaga pintu masuk panel dan dibaca
      * User::canAccessPanel(). Sengaja izin, bukan role, supaya role apa pun
@@ -352,14 +352,27 @@ return [
      * server tidak berbahaya, sedangkan memuat ulang worker menyentuh proses
      * yang sedang menyajikan panel itu sendiri.
      *
+     * `view:log_viewer` menjaga /log-viewer. Rutenya milik paket dan berdiri
+     * DI LUAR panel, jadi `Access:AdminPanel` tidak menjaganya sama sekali —
+     * tanpa izin ini halaman itu terbuka untuk siapa pun di lingkungan yang
+     * bukan produksi. Lihat bagian Log Viewer di CLAUDE.md.
+     *
+     * `delete:log_file` menjaga rute API log-viewer yang menghapus berkas dan
+     * membuang cache indeks. Paketnya cuma punya satu gerbang untuk membaca
+     * dan menghapus sekaligus; pemisahan ini dikerjakan sendiri lewat
+     * App\Http\Middleware\AuthorizeLogViewerWrites, dengan alasan yang sama
+     * dengan `restore:backup` dan `reload:octane`.
+     *
      * Nama akhirnya diformat `permissions.case` (pascal) dengan pemisah `:`,
-     * jadi ketiganya jadi `Access:AdminPanel`, `Restore:Backup`, dan
-     * `Reload:Octane`.
+     * jadi kelimanya jadi `Access:AdminPanel`, `Restore:Backup`,
+     * `Reload:Octane`, `View:LogViewer`, dan `Delete:LogFile`.
      */
     'custom_permissions' => [
         'access:admin_panel',
         'restore:backup',
         'reload:octane',
+        'view:log_viewer',
+        'delete:log_file',
     ],
 
     /*
