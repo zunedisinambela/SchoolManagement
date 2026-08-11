@@ -129,9 +129,17 @@ return [
     /*
      * When set to true, Laravel\Octane\Events\OperationTerminated event listener will be registered
      * this will refresh permissions on every TickTerminated, TaskTerminated and RequestTerminated
-     * NOTE: This should not be needed in most cases, but an Octane/Vapor combination benefited from it.
+     *
+     * WAJIB true di repo ini, dan komentar bawaan paket ("should not be needed
+     * in most cases") menyesatkan untuk kasus kita. PermissionRegistrar adalah
+     * singleton yang menyimpan koleksi izin di memori, dan loadPermissions()
+     * berhenti lebih awal kalau koleksi itu terisi -- ia TIDAK pernah menengok
+     * lagi ke cache bersama. Di bawah Octane, worker hidup melintasi request,
+     * jadi izin yang dicabut lewat panel tetap berlaku di setiap worker yang
+     * sudah memuatnya, sampai worker itu didaur ulang oleh max_requests.
+     * Dikunci OctaneConfigurationTest.
      */
-    'register_octane_reset_listener' => false,
+    'register_octane_reset_listener' => true,
 
     /*
      * Events will fire when a role or permission is assigned/unassigned:

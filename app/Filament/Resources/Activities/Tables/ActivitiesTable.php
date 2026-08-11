@@ -52,6 +52,11 @@ class ActivitiesTable
                         'backup-dijalankan' => 'info',
                         'backup-diunduh' => 'warning',
                         'backup-dihapus' => 'danger',
+                        'password-arsip-diubah' => 'warning',
+                        // Replaces the whole database with an archived copy.
+                        // The only event here that cannot be undone.
+                        'backup-dipulihkan' => 'danger',
+                        'worker-dimuat-ulang' => 'info',
                         default => 'gray',
                     }),
                 TextColumn::make('description')
@@ -83,6 +88,11 @@ class ActivitiesTable
                             ->where('causer_type', (new User)->getMorphClass())
                             ->where('causer_id', $causerId),
                     )),
+                // Hardcoded rather than read from the table, so an event that
+                // has never happened yet is still filterable. The cost is that
+                // this list drifts: an event written by new code is stored but
+                // cannot be filtered for, silently. Locked by
+                // `test_every_event_the_app_writes_can_be_filtered`.
                 SelectFilter::make('event')
                     ->label(__('Aksi'))
                     ->multiple()
@@ -101,6 +111,9 @@ class ActivitiesTable
                         'backup-dijalankan' => __('Backup dijalankan'),
                         'backup-diunduh' => __('Backup diunduh'),
                         'backup-dihapus' => __('Backup dihapus'),
+                        'password-arsip-diubah' => __('Password arsip diubah'),
+                        'backup-dipulihkan' => __('Backup dipulihkan'),
+                        'worker-dimuat-ulang' => __('Worker Octane dimuat ulang'),
                     ]),
                 SelectFilter::make('log_name')
                     ->label(__('Kanal'))

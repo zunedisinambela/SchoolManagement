@@ -85,6 +85,12 @@ enum Role: string
             // anything and hand it to themselves, View:Backups is one click
             // from downloading the whole database, and Restore:Backup swaps
             // the users table for an archived one.
+            //
+            // The two Octane permissions are withheld for a different reason:
+            // not escalation but blast radius. View:Octane names the admin API
+            // host and port and the master process id, and Reload:Octane
+            // recycles the workers serving the panel. Neither belongs to
+            // account administration.
             self::Admin => [
                 'Access:AdminPanel',
                 'ViewAny:User',

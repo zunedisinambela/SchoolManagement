@@ -336,7 +336,7 @@ return [
     */
 
     /*
-     * Dua izin yang tidak lahir dari resource, page, atau widget mana pun.
+     * Tiga izin yang tidak lahir dari resource, page, atau widget mana pun.
      *
      * `access:admin_panel` menjaga pintu masuk panel dan dibaca
      * User::canAccessPanel(). Sengaja izin, bukan role, supaya role apa pun
@@ -347,12 +347,19 @@ return [
      * users dengan versi arsip — kekuasaan yang lain dari "boleh mengunduh
      * arsip". Lihat bagian Restore di CLAUDE.md.
      *
+     * `reload:octane` menjaga tombol Muat Ulang Worker di /admin/octane.
+     * Terpisah dari `View:Octane` dengan alasan yang sama: membaca status
+     * server tidak berbahaya, sedangkan memuat ulang worker menyentuh proses
+     * yang sedang menyajikan panel itu sendiri.
+     *
      * Nama akhirnya diformat `permissions.case` (pascal) dengan pemisah `:`,
-     * jadi keduanya jadi `Access:AdminPanel` dan `Restore:Backup`.
+     * jadi ketiganya jadi `Access:AdminPanel`, `Restore:Backup`, dan
+     * `Reload:Octane`.
      */
     'custom_permissions' => [
         'access:admin_panel',
         'restore:backup',
+        'reload:octane',
     ],
 
     /*

@@ -8,8 +8,10 @@ use App\Filament\Resources\Activities\Pages\ViewActivity;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\File;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
+use Symfony\Component\Finder\SplFileInfo;
 use Tests\TestCase;
 
 class ActivityLogTest extends TestCase
@@ -123,5 +125,50 @@ class ActivityLogTest extends TestCase
         $this->assertFalse(ActivityResource::canDelete($activity));
         $this->assertArrayNotHasKey('edit', ActivityResource::getPages());
         $this->assertArrayNotHasKey('create', ActivityResource::getPages());
+    }
+
+    /**
+     * The Aksi filter's options are hardcoded, so that an event which has never
+     * happened yet is still selectable. The price is drift: code that writes a
+     * new event name stores it fine and the panel simply cannot filter for it.
+     *
+     * That already happened three times — `password-arsip-diubah`,
+     * `backup-dipulihkan` and `worker-dimuat-ulang` were all being written and
+     * none of them was in the list. Nothing errored; the rows were just
+     * unreachable through the filter.
+     *
+     * Reads the event names out of the source rather than from a second
+     * hand-written list here, because a second list would drift the same way.
+     */
+    public function test_every_event_the_app_writes_can_be_filtered(): void
+    {
+        $this->actingAs($this->admin());
+
+        $options = Livewire::test(ListActivities::class)
+            ->instance()
+            ->getTable()
+            ->getFilter('event')
+            ->getOptions();
+
+        $written = collect(File::allFiles(app_path()))
+            ->filter(fn (SplFileInfo $file): bool => $file->getExtension() === 'php')
+            ->flatMap(function (SplFileInfo $file): array {
+                preg_match_all("/->event\('([^']+)'\)/", $file->getContents(), $matches);
+
+                return $matches[1];
+            })
+            ->unique()
+            ->sort()
+            ->values();
+
+        // A guard that asserts nothing would pass forever.
+        $this->assertNotEmpty($written, 'Tidak ada ->event() yang ditemukan di app/ — regexnya patah, bukan kodenya bersih.');
+
+        $missing = $written->reject(fn (string $event): bool => array_key_exists($event, $options));
+
+        $this->assertTrue(
+            $missing->isEmpty(),
+            'Event ini ditulis kode tapi tidak ada di opsi filter Aksi, jadi barisnya tidak bisa disaring di panel: '.$missing->implode(', '),
+        );
     }
 }

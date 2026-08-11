@@ -19,16 +19,19 @@ Panduan untuk Claude Code saat bekerja di repo ini.
 | Media & unggahan | spatie/laravel-medialibrary 11 (membawa spatie/image 3) |
 | Spreadsheet | maatwebsite/excel 3.1 (membawa phpoffice/phpspreadsheet 1.30) |
 | PDF | barryvdh/laravel-dompdf 3.1 (membawa dompdf/dompdf 3.1) |
+| Server aplikasi | laravel/octane 2.18 + FrankenPHP (opsional, belum dipakai `composer run dev`) |
 | Debug | barryvdh/laravel-debugbar (dev only) |
 | Output tes | laravel/pao (dev only) |
 
-Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, serta lima fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, spreadsheet yang belum punya satu kelas export maupun import, dan PDF yang belum punya satu template.
+Belum ada modul aplikasi (siswa, kelas, nilai, dst). Yang sudah jadi baru fondasinya: panel admin, otorisasi berbasis role/permission, audit log, UI kelola pengguna & role, backup terjadwal lengkap dengan password arsip dan restore dari panel, halaman status Octane, serta lima fondasi yang terpasang tapi belum dipakai siapa pun: broadcasting WebSocket yang belum menyiarkan satu event, pengolah gambar yang belum menyentuh satu berkas, media library yang belum dilampirkan ke satu model, spreadsheet yang belum punya satu kelas export maupun import, dan PDF yang belum punya satu template.
+
+Octane berdiri di kategori lain. Ia bukan fondasi yang menunggu dipakai melainkan **cara aplikasi ini dijalankan** — dan memasangnya sudah mengubah dua baris config demi kebenaran, bukan demi kecepatan. Belum dijadikan default: `composer run dev` masih memakai `php artisan serve`, jadi halaman `/admin/octane` melaporkan "server tidak jalan" di pengembangan dan itu memang jawaban yang benar. Lihat *Octane*.
 
 Role `guru`, `karyawan`, dan `murid` sudah ada di enum tapi belum punya modul apa pun — dua yang pertama masuk panel dan melihatnya kosong, yang terakhir tidak masuk sama sekali.
 
 Tabel yang ada: bawaan Laravel (`users`, `cache`, `jobs`), `activity_log`, lima tabel role/permission, `backup_schedules`, dan `media`.
 
-Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/activities`, `/admin/backups`. (`/admin/permissions` sudah tidak ada — izin kini dicentang di dalam editor Role milik filament-shield.)
+Halaman panel yang sudah ada: `/admin/users`, `/admin/roles`, `/admin/activities`, `/admin/backups`, `/admin/octane`. (`/admin/permissions` sudah tidak ada — izin kini dicentang di dalam editor Role milik filament-shield.)
 
 ## Perintah
 
@@ -38,6 +41,9 @@ composer run test     # config:clear lalu artisan test
 composer run setup    # install deps, generate key, migrate, build asset
 ./vendor/bin/pint     # format kode PHP
 php artisan reverb:start  # server WebSocket saja, tanpa sisa proses dev
+php artisan octane:start  # server aplikasi (FrankenPHP), BUKAN bagian composer run dev
+php artisan octane:reload # muat ulang worker setelah deploy, tanpa memutus koneksi
+php artisan octane:status # cek worker hidup atau tidak
 php artisan storage:link  # symlink public/storage, wajib sekali per instalasi
 php artisan shield:generate --all --panel=admin   # izin + policy dari isi panel
 php artisan shield:super-admin --user=1           # jadikan user tertentu super-admin
@@ -125,7 +131,7 @@ php artisan shield:generate --resource=SiswaResource --option=permissions
 php artisan shield:super-admin --user=1
 ```
 
-Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Lima belas izin yang ada sekarang:
+Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `permissions` pada `config/filament-shield.php`. Tujuh belas izin yang ada sekarang:
 
 | Sumber | Izin |
 |---|---|
@@ -133,9 +139,10 @@ Bentuk namanya `Aksi:Subjek` — pascal case dengan pemisah `:`, disetel di `per
 | `RoleResource` | `ViewAny:Role`, `View:Role`, `Create:Role`, `Update:Role`, `Delete:Role` |
 | `ActivityResource` | `ViewAny:Activity`, `View:Activity` |
 | `Backups` (page) | `View:Backups` |
-| kustom | `Access:AdminPanel`, `Restore:Backup` |
+| `Octane` (page) | `View:Octane` |
+| kustom | `Access:AdminPanel`, `Restore:Backup`, `Reload:Octane` |
 
-**Dua izin kustom, dan keduanya bukan kelalaian.** Tidak ada model di balik "panel itu sendiri" maupun di balik "memulihkan arsip", jadi keduanya dideklarasikan di `custom_permissions` pada config. Agar bisa dicentang lewat UI, `shield_resource.tabs.custom_permissions` harus `true` — bawaan paketnya `false`, dan dengan itu `Restore:Backup` tidak akan pernah bisa diberikan lewat panel.
+**Tiga izin kustom, dan tidak satu pun kelalaian.** Tidak ada model di balik "panel itu sendiri", di balik "memulihkan arsip", maupun di balik "memuat ulang worker", jadi ketiganya dideklarasikan di `custom_permissions` pada config. Agar bisa dicentang lewat UI, `shield_resource.tabs.custom_permissions` harus `true` — bawaan paketnya `false`, dan dengan itu `Restore:Backup` serta `Reload:Octane` tidak akan pernah bisa diberikan lewat panel.
 
 **Daftar method dipangkas per resource.** Bawaan Shield membuat 13 izin per resource, termasuk `Restore`, `ForceDelete`, `Replicate`, dan `Reorder` yang tidak punya tombol di panel ini. `resources.manage` di config memangkasnya — tapi hanya kalau **`policies.merge` `false`**. Dengan `true` (bawaan paket) daftar itu di-`array_merge` dengan daftar default, jadi ia menambah alih-alih mengganti. Tidak ada error; satu-satunya gejalanya jumlah izin yang tidak turun.
 
@@ -248,7 +255,7 @@ Menu **Izin** sudah tidak ada. Shield tidak punya resource untuk permission — 
 
 URL-nya sengaja tetap `/admin/roles`. Bawaan Shield `/admin/shield/roles`; diubah lewat `shield_resource.slug` supaya tautan lama tidak patah.
 
-Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `ViewAny:Activity`, read-only) dan **Backup** (`/admin/backups`, izin `View:Backups`, plus `Restore:Backup` khusus untuk tombol Pulihkan) — lihat bagian *Audit log* dan *Backup*.
+Di luar grup itu: **Log Aktivitas** (`/admin/activities`, izin `ViewAny:Activity`, read-only), **Backup** (`/admin/backups`, izin `View:Backups`, plus `Restore:Backup` khusus untuk tombol Pulihkan), dan **Octane** (`/admin/octane`, izin `View:Octane`, plus `Reload:Octane` khusus untuk tombol Muat Ulang Worker) — lihat bagian *Audit log*, *Backup*, dan *Octane*.
 
 Pengaman yang sengaja dipasang — jangan dilonggarkan tanpa alasan:
 
@@ -352,6 +359,7 @@ Tabel `activity_log`, config di `config/activitylog.php`. Dilihat lewat menu **L
 | `otorisasi` | trait `LogsActivity` di `App\Models\Role` dan `App\Models\Permission` | `created`, `updated`, `deleted` |
 | `backup` | aksi di `App\Filament\Pages\Backups` | `backup-dijalankan`, `backup-diunduh`, `backup-dihapus`, `password-arsip-diubah`, `backup-dipulihkan` |
 | `backup` | trait `LogsActivity` di `App\Models\BackupSchedule` | `updated` |
+| `octane` | aksi di `App\Filament\Pages\Octane` | `worker-dimuat-ulang` |
 
 Kanal `otorisasi` butuh `'events_enabled' => true` di `config/permission.php`. Kalau dimatikan, pemberian dan pencabutan hak akses hilang dari jejak audit — padahal justru itu perubahan yang paling perlu terlacak.
 
@@ -387,6 +395,16 @@ Semua listener didaftarkan manual di `AppServiceProvider::boot()`. Methodnya din
 Alasannya: auto-discovery Laravel mencocokkan pola `handle*`, bukan cuma `handle` persis (`DiscoverEvents.php`, `Str::is('handle*', ...)`). Method bernama `handleLogin` akan terdaftar **dua kali** — sekali oleh discovery, sekali oleh `Event::listen` — dan setiap aktivitas tertulis dobel di `activity_log`.
 
 Kalau menambah listener baru: nama method `recordX`, lalu daftarkan di `AppServiceProvider`. Tes `ActivityLogTest` dan `AccessManagementUiTest` memakai `assertCount(1, ...)` khusus untuk menangkap regresi ini.
+
+### Opsi filter Aksi ditulis tangan
+
+`ActivitiesTable` menyebut nama event **dua kali**: sekali di peta warna badge, sekali di opsi `SelectFilter::make('event')`. Keduanya literal, dan itu disengaja — daftar yang dibaca dari tabel hanya memuat event yang **pernah terjadi**, sehingga filter untuk aksi langka baru muncul setelah aksinya terjadi sekali.
+
+Harganya melenceng. Event yang ditulis kode baru **tetap tersimpan** tapi tidak ada di opsi filter, jadi barisnya tidak bisa disaring di panel: jejaknya ada dan tidak ada yang bisa menemukannya. Tidak ada error, dan badge-nya cuma jatuh ke `default => 'gray'`.
+
+Sudah kejadian tiga kali sekaligus: `password-arsip-diubah`, `backup-dipulihkan`, dan `worker-dimuat-ulang` semuanya ditulis kode tanpa satu pun ada di daftar. Dua yang pertama justru aksi paling berkonsekuensi di aplikasi ini.
+
+**Menambah `activity(...)->event('x')` di mana pun = tambahkan `x` ke kedua daftar itu.** `test_every_event_the_app_writes_can_be_filtered` membaca nama event langsung dari source di `app/` lalu mencocokkannya ke opsi filter, jadi yang terlewat jadi merah — tapi ia hanya menjaga daftar filter, bukan peta warnanya.
 
 ### Menambah model baru ke audit log
 
@@ -698,6 +716,8 @@ Empat hal yang tidak kelihatan dari perintahnya:
 **Kenapa staging, bukan impor langsung.** Dump berisi `CREATE TABLE IF NOT EXISTS` dan `INSERT` polos. Diimpor ke database yang masih berisi tabel, ia **tidak menimpa apa pun** — hasilnya campuran data lama dan data arsip, `INSERT`-nya bentrok primary key lalu berhenti separuh jalan, dan exit code-nya tetap 0. File kosong yang baru dibuat tidak punya masalah itu, dan kegagalan di langkah 3 tidak menyentuh apa pun.
 
 **`composer run dev` tidak perlu dimatikan.** Setelah `mv`, proses yang masih memegang file lama menulis ke inode yang sudah dilepas, bukan ke database baru. Tulisan itu hilang bersama filenya — yang justru diinginkan. Ini keuntungan langsung dari swap; jalur "kosongkan lalu impor" memang mengharuskan semuanya berhenti.
+
+**Di bawah Octane kalimat di atas bersyarat.** Proses yang memegang inode lama di sana bukan proses sekali pakai melainkan worker yang hidup melintasi ratusan request, jadi ia tidak sekadar kehilangan tulisannya — ia terus **membaca** database sebelum-restore dan menyajikannya ke pengguna. Yang menahannya cuma satu baris di `config/octane.php`; lihat *Dua default paket yang diubah* di bagian Octane.
 
 **Restore memundurkan skema *dan* isi seeder** — dan keduanya butuh langkah berbeda. `migrate --force` mengembalikan strukturnya (arsip membawa tabel `migrations` sendiri, jadi hanya migrasi yang lebih baru yang jalan). Tapi migrasi tidak menambah **baris**: role dan permission yang lahir setelah arsip dibuat tetap hilang sampai `RolePermissionSeeder` dijalankan. Terjadi persis begitu saat memulihkan arsip 14:50 di repo ini — `Restore:Backup` hilang, dan tombol Pulihkan mati untuk semua orang kecuali `super-admin` yang lolos lewat `Gate::before`.
 
@@ -1276,6 +1296,187 @@ Sama seperti media library: mengunduh rapor atau transkrip adalah jenis akses ya
 
 Otorisasinya juga berdiri sendiri: rute yang menghasilkan PDF **wajib punya pengecekan izinnya sendiri**. Kelas bug yang sama dengan channel broadcasting dan action Filament — pengaman di satu lapis tidak ikut ke lapis lain.
 
+## Octane (laravel/octane + FrankenPHP)
+
+Menahan aplikasi tetap ter-boot di memori dan memakai ulang worker yang sama untuk banyak request. Versi 2.18.0. Server yang dipilih **FrankenPHP** — tanpa ekstensi PHP, tanpa sudo, dan karena ia berbasis Caddy ia membawa TLS serta proxy `wss://` sendiri (relevan untuk Reverb, lihat checklist deploy).
+
+```bash
+php artisan octane:start                  # baca OCTANE_SERVER dari .env
+php artisan octane:start --workers=4 --max-requests=500
+php artisan octane:reload                 # muat ulang worker, koneksi tidak putus
+php artisan octane:stop
+```
+
+| Berkas | Isi |
+|---|---|
+| `config/octane.php` | Listener siklus hidup, warm/flush, watch, ambang GC |
+| `frankenphp` | Biner statis ±161 MB di root. **Di-gitignore** oleh installer |
+| `.env` → `OCTANE_SERVER` | `frankenphp` |
+| `app/Support/Octane/Diagnostics.php` | Sepuluh pemeriksaan + probe admin API. Nol Filament, jadi bisa diuji tanpa Livewire |
+| `app/Filament/Pages/Octane.php` | Halaman `/admin/octane` dan satu-satunya aksi yang memutasi apa pun |
+
+**`OCTANE_SERVER` wajib ada di `.env`.** Bawaan `config/octane.php` adalah `env('OCTANE_SERVER', 'roadrunner')` — dan RoadRunner tidak terpasang di repo ini. Instalasi baru yang menyalin `.env.example` tanpa baris itu akan menjalankan `octane:start` ke server yang binernya tidak ada. Karena itu barisnya sudah ditambahkan ke `.env.example`, berikut alasannya.
+
+**Binernya tidak di git dan tidak di backup**, sama seperti `storage/fonts`. Ia diunduh ulang oleh `octane:install`, jadi ini benar — tapi artinya deploy tidak bisa mengandalkan `git pull` saja.
+
+### UI di panel — `/admin/octane`
+
+Menu **Octane** (`$navigationSort` 85, tanpa grup, di antara Backup dan Log Aktivitas). Izinnya `View:Octane`, terpisah dari `Access:AdminPanel`: halaman ini menyebut host dan port admin API, path state file, dan id master process — bentuk servernya, bukan sesuatu yang ikut terbawa hanya karena seseorang boleh masuk panel.
+
+Sama seperti Backup, ini **`Filament\Pages\Page`, bukan Resource** — worker dan config bukan record Eloquent. Tabelnya diisi `->records()`, jadi tiap baris sampai ke closure sebagai `array`. Bedanya dari Backup: kunci barisnya milik kita sendiri, bukan input pengguna, dan tidak pernah menyentuh filesystem maupun query — jadi **tidak ada** padanan `resolveBackup()` di sini, dan memang tidak dibutuhkan.
+
+Isinya: verdict satu baris di subheading, sepuluh baris pemeriksaan, dan satu aksi.
+
+| Yang dilaporkan | Kenapa ada di sini |
+|---|---|
+| `octane.server` + biner FrankenPHP ada/tidak | Bawaan config `roadrunner`, dan binernya di-gitignore |
+| Server sedang jalan | Probe ke admin API — lihat di bawah |
+| Request ini dilayani Octane | `LARAVEL_OCTANE` di env proses server |
+| Reset cache izin tiap operasi | `permission.register_octane_reset_listener` |
+| Putus koneksi DB tiap operasi | `DisconnectFromDatabases` |
+| Sandbox config tiap request | `CreateConfigurationSandbox` |
+| chokidar terpasang | `octane:start --watch` tidak bekerja tanpanya |
+| `garbage`, `max_execution_time` | Konteks saat memori worker tumbuh |
+
+Tiga baris tengah itulah alasan halaman ini dibuat: ketiganya **senyap**. Kembali ke bawaan paket tidak melempar error apa pun — lihat *Dua default paket yang diubah*. Tiga baris terakhir dilaporkan `bad` (merah) kalau berbalik, dan `verdict()` ikut merah.
+
+#### Tiga perintah yang tidak bisa jadi tombol, dan satu yang bisa
+
+| Perintah | Di panel? | Alasan |
+|---|---|---|
+| `octane:start` | **mustahil** | Request tidak bisa melahirkan proses yang hidup lebih lama darinya. Server harus dinyalakan supervisor |
+| `octane:stop` | **sengaja tidak ada** | Mematikan server yang sedang menyajikan halaman itu, dan tidak ada apa pun di panel yang bisa menghidupkannya lagi |
+| `octane:reload` | **ada** | FrankenPHP memuat ulang dengan mem-`PATCH` config Caddy ke dirinya sendiri, jadi request yang sedang berjalan tetap selesai |
+| `octane:status` | **ada, otomatis** | Baris "Server sedang jalan" |
+
+Tombol **Muat Ulang Worker** butuh izin **kedua**, `Reload:Octane`, terpisah dari `View:Octane`. Membaca status tidak berbahaya; memuat ulang worker menyentuh proses yang menyajikan panel itu sendiri. Dijaga `->visible()` pada izin **dan** `abort_unless` di dalam methodnya — yang kedua bukan duplikasi, karena aksi Filament tidak punya otorisasi otomatis (lihat *Action Filament TIDAK ikut `canEdit()`/`canDelete()`*).
+
+Notifikasinya berbunyi "**dikirim**", bukan "berhasil", dan itu jujur bukan malu-malu: `ServerProcessInspector::reloadServer()` menelan `ConnectionException` lalu mengembalikan `void`. Panel benar-benar tidak tahu hasilnya.
+
+**Muat ulang ini tidak menyentuh queue worker.** Sudah disebut di modal konfirmasinya, karena itu jebakan deploy yang sama dengan langkah 30 di checklist — `queue:restart` tetap perlu sendiri.
+
+Muat ulang yang berhasil dicatat ke kanal `octane` sebagai event `worker-dimuat-ulang`. Yang gagal di gerbang (server tidak jalan, server bukan FrankenPHP) **tidak** dicatat — tidak ada yang terjadi untuk dicatat.
+
+`reload()` mengambil `Diagnostics` lewat `app(Diagnostics::class)`, **bukan `new`**, dan itu bukan selera. Tanpa celah container itu jalur pencatatannya tidak bisa diuji sama sekali: pengembangan dilayani `php artisan serve`, jadi `serverRunning()` selalu `false` dan methodnya selalu berhenti sebelum menulis apa pun. `test_reloading_the_workers_reaches_the_audit_log` menukarnya dengan stub yang mengaku hidup. Bindingnya bukan singleton, jadi probe di `reload()` tetap segar.
+
+#### Cek status = panggilan jaringan, dan package-nya tanpa timeout
+
+Bagian paling halus di halaman ini. `ServerProcessInspector` milik FrankenPHP **tidak** membaca PID atau mengirim signal — ia HTTP `GET` ke admin API Caddy:
+
+```
+http://{adminHost}:{adminPort}/config/apps/frankenphp     # bawaan localhost:2019
+```
+
+Dua konsekuensi, dan `App\Support\Octane\Diagnostics` ada karena keduanya:
+
+**1. `Http::get()` di package itu tanpa timeout**, jadi ikut default 30 detik. Port yang di-`DROP` firewall (bukan `REJECT`) akan menggantung halaman panel setengah menit. `Diagnostics::probe()` menyalin logika yang sama persis — URL identik — tapi dengan gerbang `fsockopen` 0.3 detik lebih dulu, lalu `Http::connectTimeout(1)->timeout(2)`.
+
+**2. State file bisa basi.** `masterProcessId` ada tapi admin API menolak koneksi = server mati tanpa membersihkan state file, dan keadaan itu membuat `octane:start` melapor server sudah jalan. Boolean milik package melebur ini dengan "tidak jalan"; `stateFileIsStale()` memisahkannya dan halaman menampilkannya kuning beserta path berkas yang harus dihapus.
+
+Hasil probe **dimemo per render, tidak di-cache lintas request**, dan halamannya sengaja **tanpa polling**. "Server jalan" yang basi lebih berbahaya daripada satu socket connect.
+
+**`octane.state_file` wajib diisolasi di tes.** Bawaannya `storage/logs/octane-server-state.json` — berkas nyata di mesin siapa pun yang pernah menjalankan `octane:start`, kadang dengan server yang benar-benar hidup di belakangnya. `OctanePageTest::setUp()` mengarahkannya ke path sementara; tanpa itu tesnya lulus atau gagal tergantung apa yang sedang jalan di laptop yang menjalankannya.
+
+#### Server mati bukan kegagalan
+
+`checks()` memberi tiap baris severity, dan baris keadaan runtime **tidak pernah** `bad`:
+
+| Severity | Arti |
+|---|---|
+| `ok` | Nilainya seperti yang dibutuhkan repo ini |
+| `bad` | Diam-diam merusak kebenaran. Hanya untuk tiga baris config di atas |
+| `warn` | Jalan, tapi ada jebakan yang menunggu (state file basi, server bukan FrankenPHP) |
+| `info` | Keadaan runtime, bukan penilaian |
+
+"Server tidak jalan" adalah `info`, dan itu **jawaban yang benar di pengembangan** — `composer run dev` memakai `php artisan serve`. Menandainya `bad` akan membuat halaman ini merah permanen di tiap laptop, dan alarm palsu harian persis yang membuat orang berhenti membaca halaman statusnya. Kelas keputusan yang sama dengan `MaximumAgeMatchingSchedule` untuk backup.
+
+### Belum jadi default, dan itu disengaja
+
+`composer run dev` masih menjalankan `php artisan serve`. Octane tidak ikut, dan menambahkannya bukan sekadar mengganti satu kata:
+
+- `octane:start --watch` butuh `npm install chokidar`; tanpa itu perubahan kode **tidak** terbaca sampai worker dimuat ulang manual. Ini gejala yang sangat membingungkan saat dev: berkas sudah disimpan, browser tetap menampilkan kode lama.
+- Debugbar mengumpulkan data per request di proses yang tidak pernah mati. Ia `require-dev` dan tidak sampai ke produksi, tapi di dev ia tumbuh.
+
+Jadi Octane sekarang adalah **jalur produksi**, bukan jalur pengembangan. Kalau nanti mau dijadikan default dev, ubah `composer run dev` dan pasang chokidar dalam satu langkah yang sama.
+
+### Dua default paket yang diubah, dan keduanya soal kebenaran
+
+Ini bagian terpenting di bab ini. Keduanya senyap: kembali ke bawaan tidak menghasilkan error apa pun.
+
+**1. `permission.register_octane_reset_listener` → `true`** (bawaan paket `false`).
+
+`PermissionRegistrar` adalah singleton yang menyimpan koleksi izin di memori, dan `loadPermissions()` berhenti lebih awal begitu koleksi itu terisi:
+
+```php
+if ($this->permissions) {
+    return;   // tidak pernah menengok lagi ke cache bersama
+}
+```
+
+Tanpa Octane itu tidak berbahaya — memorinya mati di akhir request. Dengan Octane, worker hidup melintasi ratusan request. Akibatnya:
+
+| Langkah | Hasil |
+|---|---|
+| Worker memuat izin | `can('ViewAny:User')` → `true` |
+| Izin dicabut lewat panel (worker lain / CLI), cache bersama dibatalkan | — |
+| Worker **lama** menjawab request berikutnya | `true` — **izin yang sudah dicabut masih berlaku** |
+| Setelah `clearPermissionsCollection()` | `false` |
+
+Cache bersama **memang** dibatalkan oleh `forgetCachedPermissions()`, tapi worker lama tidak pernah menengoknya lagi. Basinya bertahan sampai worker didaur ulang oleh `max_requests`.
+
+Spatie membawa listener Octane-nya sendiri, tapi bergerbang flag ini, dan komentar bawaannya berbunyi *"This should not be needed in most cases"*. Untuk aplikasi yang seluruh otorisasinya dibangun di atas paket itu, komentar itu menyesatkan.
+
+**2. `DisconnectFromDatabases` diaktifkan** di `octane.listeners` (bawaan Octane mengomentarinya).
+
+Tombol **Pulihkan** di `/admin/backups` menukar `database/database.sqlite` lewat `rename()`. Koneksi yang bertahan melintasi request tetap memegang inode **lama**:
+
+| Langkah | Hasil |
+|---|---|
+| Worker membaca | `DATA-LAMA` |
+| `rename()` restore dijalankan | — |
+| Worker yang sama membaca lagi | `DATA-LAMA` — masih inode lama |
+| Setelah `DB::purge()` | `DATA-BARU` |
+
+Tanpa listener ini, worker yang sudah terhubung menyajikan database **sebelum-restore** sampai ia didaur ulang — dan pengguna melihat data berbeda tergantung worker mana yang melayaninya. Untuk SQLite biaya menyambung ulang cuma membuka file handle, jadi ini nyaris gratis. Untuk MySQL/PostgreSQL biayanya nyata dan perlu ditimbang ulang.
+
+Keduanya dikunci `OctaneConfigurationTest`, yang **tidak hanya memeriksa nilai config** tapi juga memperagakan kedua mekanismenya.
+
+### Yang direset otomatis, dan yang tidak
+
+`Octane::prepareApplicationForNextOperation()` sudah memasang ±28 listener yang mengganti instance manager (database, cache, session, queue, mail, view, router, …) dan membersihkan state framework tiap operasi. Yang perlu diketahui khusus repo ini:
+
+**Config aman.** `CreateConfigurationSandbox` menjalankan `$sandbox->instance('config', clone $sandbox['config'])` setiap request. Jadi `BackupSchedule::applyArchivePassword()` — satu-satunya tempat di repo ini yang memutasi config saat runtime lewat `config([...])` — hanya menyentuh salinan milik request itu. Mutasinya tidak bocor ke request berikutnya.
+
+**Yang tidak dijaga siapa pun: state statis buatan sendiri.** Saat ini `app/` **tidak punya** satu pun properti statis yang menyimpan data, dan itu perlu dipertahankan. Di bawah Octane, `private static array $cache` di sebuah service akan bertahan melintasi request dan melintasi **pengguna** — itu jalur kebocoran data antar akun, bukan sekadar bug kebasian.
+
+Aturan praktisnya saat menambah modul: jangan menyimpan apa pun yang berasal dari request di properti statis atau di singleton. Kalau butuh cache, pakai `Cache::` yang punya kunci dan masa berlaku.
+
+### Proses lain tidak ikut berubah
+
+Reverb dan queue worker adalah proses terpisah dan **tidak** dijalankan Octane. Jadi:
+
+- `RunBackup`, konversi medialibrary, dan export terjadwal tetap butuh `queue:work` seperti biasa.
+- `reverb:start` tetap proses sendiri di bawah supervisor.
+- Perintah artisan (`backup:run`, `activitylog:clean`, seeder) tetap proses sekali jalan — tidak ada state yang bertahan, jadi tidak ada satu pun jebakan di bab ini yang berlaku di sana.
+
+Konsekuensi yang mudah terlewat: `octane:reload` **tidak** memuat ulang queue worker. Deploy yang mengubah kode job harus memuat ulang keduanya (`octane:reload` dan `queue:restart`).
+
+### Restore backup dan Octane
+
+Bagian *Restore* menyatakan `composer run dev` tidak perlu dimatikan saat menukar database. Itu tetap benar, **dan di bawah Octane ia benar hanya karena `DisconnectFromDatabases` diaktifkan.** Kalau listener itu dikomentari lagi, restore lewat panel akan tampak berhasil sementara sebagian worker terus menyajikan database lama.
+
+Satu hal yang tetap tidak tertangani: `RestoreArchive` memanggil `forgetCachedPermissions()` setelah swap, dan itu hanya menyentuh worker yang menjalankannya. Yang menyelamatkan keadaan adalah flag pertama di atas — listener spatie membersihkan koleksi izin di **tiap** worker pada akhir tiap operasi. Tanpa itu, restore meninggalkan worker-worker lain memegang izin beserta **id** dari database yang sudah tidak ada.
+
+### Produksi
+
+Sama dengan Reverb: `octane:start` adalah **proses yang harus terus hidup**, bukan perintah sekali jalan. Butuh supervisor (systemd/supervisord), dan mati bersama sesi SSH tanpa itu.
+
+Yang berbeda dari Reverb: setelah deploy, kode baru **tidak** terpakai sampai worker dimuat ulang. `php artisan octane:reload` wajib masuk skrip deploy — kalau tidak, `git pull` yang sukses akan menyajikan kode lama tanpa gejala apa pun.
+
+`max_requests` (bawaan CLI 500) mendaur ulang worker secara berkala. Itu jaring pengaman terhadap kebocoran memori, bukan pengganti kode yang bersih — dan ia juga yang membatasi berapa lama sebuah state basi bisa bertahan.
+
+`garbage` di config (50 MB) memicu GC saat pemakaian memori melewatinya. Kalau memori worker tumbuh terus melewati ambang itu, penyebabnya hampir selalu state yang menumpuk di singleton, bukan Octane-nya.
+
 ## Tes
 
 `composer run test` — semuanya harus hijau sebelum commit. Database tes SQLite `:memory:` (`phpunit.xml`), jadi tidak menyentuh `database/database.sqlite`.
@@ -1286,7 +1487,7 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 |---|---|
 | `AdminPanelAccessTest` | Siapa boleh membuka `/admin`, dan panel id asing tidak mewarisi aturan admin |
 | `RolePermissionTest` | Guard `web` cocok, gate super-admin, developer tidak ikut bypass, tiap role dapat izin bawaannya dan tidak lebih, tiap izin bawaan benar-benar ada, tiga baris config shield yang beda dari bawaan, seeder idempoten & tidak mencabut, dan seeding lewat `DatabaseSeeder` benar-benar memberikan izinnya |
-| `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku |
+| `ActivityLogTest` | Login/gagal login tercatat, password tidak bocor, halaman log render, filter pelaku, dan **tiap event yang ditulis kode ada di opsi filter Aksi** |
 | `AccessManagementUiTest` | Form pengguna & role, centang izin di tab Shield (termasuk tab kustom), pengaman anti-terkunci, tidak ada resource yang membuka model Permission, perubahan otorisasi masuk log — termasuk yang lewat editor Role milik Shield |
 | `TableActionAuthorizationTest` | Tombol Ubah/Hapus benar-benar menolak, bukan cuma `can*()` yang bilang `false`; aksi header halaman Role masih dirender |
 | `BackupConfigurationTest` | Tujuan backup, `.env` tidak ikut terarsip, nama pantauan cocok, jadwal terdaftar |
@@ -1295,6 +1496,8 @@ Kalau yang menjalankan adalah AI agent, outputnya berupa satu baris JSON, bukan 
 | `BackupArchivePasswordTest` | Password panel menang atas `.env`, fallback ke `.env`, sampai ke kedua jalur backup, terenkripsi di DB, tidak bocor ke `activity_log` |
 | `BackupRestoreTest` | Tombol Pulihkan butuh izinnya sendiri, salah ketik nama berkas menolak, swap berhasil, dan **tiap jalur gagal meninggalkan database hidup utuh**. Belum menjaga: izin baru yang hilang setelah memulihkan arsip lama |
 | `ImageDriverConfigurationTest` | Dua tumpukan gambar memakai driver yang sama, nilainya diterima masing-masing paket, EXIF dibuang, dan berkas media mendarat di disk yang ikut backup |
+| `OctaneConfigurationTest` | Dua baris config yang membuat Octane aman: izin yang dicabut benar-benar dicabut lintas worker, dan restore backup terlihat oleh worker yang sudah terhubung. Dua tesnya memperagakan mekanismenya, bukan cuma mencocokkan nilai config |
+| `OctanePageTest` | Halaman `/admin/octane`: izinnya sendiri, tombol Muat Ulang butuh izin **kedua**, tombolnya mati saat server tidak jalan dan memanggilnya tidak menulis baris audit, muat ulang yang benar-benar jalan **sampai ke `activity_log` dan bisa disaring di panel**, config yang kembali ke bawaan dilaporkan `bad`, dan server mati **tidak** dilaporkan sebagai kegagalan |
 
 **Broadcasting, pengolahan gambar, spreadsheet, dan PDF belum punya tes sama sekali.** Disengaja selama belum ada event yang disiarkan, belum ada berkas yang diolah, belum ada kelas export/import, dan belum ada template PDF — tidak ada perilaku yang bisa dikunci. Begitu channel pertama lahir, yang wajib diuji adalah **closure otorisasinya**, bukan pengirimannya:
 
@@ -1318,6 +1521,7 @@ Untuk PDF, yang layak dikunci **bukan** isi berkasnya. Rendering yang salah keta
 Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus karena terlihat sepele:
 
 - `assertCount(1, ...)` pada tes log: menangkap listener yang terdaftar dua kali (lihat bagian `recordX`).
+- `test_every_event_the_app_writes_can_be_filtered`: opsi filter **Aksi** di tabel log ditulis tangan, jadi event baru tersimpan tanpa bisa disaring — tanpa error, tanpa gejala. Sudah kejadian tiga kali sekaligus. Tesnya membaca nama event dari source (`->event('…')` di `app/`), bukan dari daftar kedua yang akan melenceng dengan cara yang sama. Lihat *Opsi filter Aksi ditulis tangan*.
 - `test_every_baseline_permission_exists`: menangkap string izin di `Role::permissions()` yang tidak cocok dengan apa pun yang digenerate Shield. Sejak enum `Permission` dihapus, nama izin tidak lagi diperiksa tipe — salah ketik memberi izin yang tidak menjaga apa pun, tanpa error. `test_every_enum_role_is_seeded` menjaga hal yang sama untuk role.
 - `test_the_super_admin_name_matches_shield`, `test_shield_grants_super_admin_through_the_gate`, dan `test_the_shield_panel_user_role_is_disabled`: mengunci tiga baris `config/filament-shield.php` yang **berbeda dari bawaan paket**. Kembali ke bawaan tidak menimbulkan error apa pun — yang berubah cuma siapa yang bisa apa.
 - `test_no_panel_resource_exposes_permissions_directly`: pengganti tes resource Izin read-only yang lama. Menjaga tidak ada resource panel yang menunjuk model Permission.
@@ -1327,6 +1531,8 @@ Beberapa tes menjaga hal yang **tidak kelihatan dari kode** — jangan dihapus k
 - `test_reseeding_does_not_revoke_a_permission_granted_by_hand`: menangkap seeder yang diubah jadi `syncPermissions`, yang akan membuat tiap deploy membatalkan penyesuaian izin lewat panel.
 - `test_seeding_through_the_database_seeder_grants_role_permissions`: satu-satunya tes yang memanggil `$this->seed()` tanpa argumen, jadi satu-satunya yang melewati `WithoutModelEvents` milik `DatabaseSeeder` — jalur yang sebenarnya dipakai `migrate:fresh --seed`. Assert-nya sengaja pada **grant**, bukan `Permission::count()`: barisnya tetap tertulis walau bug-nya kambuh, jadi menghitung baris akan hijau sepanjang kegagalan. Role yang diuji `guru`, bukan `super-admin`, karena yang terakhir lolos lewat `Gate::before` dan akan hijau apa pun keadaan cachenya. Latar belakangnya di bagian *`DatabaseSeeder` membungkam model event*.
 - `test_the_package_resolves_the_app_models`: menangkap `config/permission.php` yang balik menunjuk model Spatie.
+- `test_a_stale_permission_collection_still_grants_a_revoked_permission`: satu-satunya tes di repo ini yang **sengaja menegaskan perilaku yang salah**. Ia membuktikan koleksi izin yang basi masih memberikan izin yang sudah dicabut — itulah alasan `register_octane_reset_listener` dinyalakan. Kalau suatu saat ia gagal, artinya spatie berhenti menyimpan koleksi itu di memori dan flag-nya perlu ditinjau ulang, bukan tesnya yang dibetulkan. Usernya `admin`, bukan `super-admin`, karena yang terakhir lolos lewat `Gate::before` dan akan hijau apa pun keadaan cachenya — jebakan yang sama dengan tes seeder.
+- `test_a_reused_connection_keeps_reading_the_pre_restore_file`: membuktikan koneksi yang dipakai ulang memegang inode lama setelah `rename()`. Ia berjalan di berkas sqlite sementara, jadi tidak menyentuh database tes maupun database aplikasi.
 - `assertStringNotContainsString` pada tes gagal login: menangkap password yang ikut tersimpan.
 - `callTableAction` + `assertModelExists` di `TableActionAuthorizationTest`: menangkap tombol hapus yang lolos pengaman. Memanggil `canDelete()` saja tidak cukup.
 
@@ -1515,6 +1721,11 @@ Ikut `config('app.locale')` — jangan hardcode `'id'`.
 25. Pastikan `storage/fonts` ada dan bisa ditulis. Direktori itu tujuan pendaftaran font kustom dompdf; isinya di-gitignore, jadi instalasi baru mendapat direktorinya tanpa fontnya. Teks Latin tetap jalan dengan font bawaan — yang gagal cuma glyph di luar cakupannya, dan gagalnya berupa kotak kosong di PDF tanpa error apa pun.
 26. Jangan pernah menyalakan `dompdf.options.enable_php`. Ia mengeksekusi `<script type="text/php">` di dalam HTML yang dirender — RCE penuh begitu ada template yang menyentuh input pengguna. `enable_remote` juga biarkan `false`; kalau butuh aset dari URL, pakai `allowed_remote_hosts`, bukan saklar globalnya.
 27. Render PDF panjang lewat queue, bukan di dalam request. dompdf memarsing HTML/CSS di PHP murni dan biayanya tumbuh per halaman — sama seperti tombol Backup Sekarang, dan dengan konsekuensi yang sama: tanpa worker jalan tidak ada berkas yang pernah muncul.
+28. Pastikan `OCTANE_SERVER=frankenphp` ada di `.env` produksi dan binernya sudah diunduh (`php artisan octane:install --server=frankenphp`). Bawaan config-nya `roadrunner`, dan binernya tidak ikut git — `git pull` saja tidak cukup.
+29. Jalankan `octane:start` di bawah supervisor, bukan dari SSH. Proses yang harus terus hidup, sama seperti `reverb:start` dan queue worker.
+30. **Tambahkan `php artisan octane:reload` ke skrip deploy.** Worker menahan kode lama di memori; tanpa reload, deploy yang sukses menyajikan versi sebelumnya tanpa gejala apa pun. Ia tidak memuat ulang queue worker — `php artisan queue:restart` tetap perlu sendiri.
+31. Buka `/admin/octane` sekali setelah deploy. Halaman itu memeriksa keempat hal di bagian *Verifikasi cepat → Octane* sekaligus, termasuk apakah request yang sedang dilayani benar-benar lewat worker Octane — cara paling cepat menangkap `octane:reload` yang terlewat di skrip deploy. Jangan berikan `Reload:Octane` secara default; pemegangnya bisa mendaur ulang worker yang sedang menyajikan panel.
+32. Jangan pernah mengomentari `DisconnectFromDatabases` di `config/octane.php` dan jangan kembalikan `permission.register_octane_reset_listener` ke `false`. Yang pertama membuat restore backup tidak terlihat oleh worker yang sudah terhubung; yang kedua membuat izin yang dicabut tetap berlaku sampai worker didaur ulang. Keduanya tanpa error, dan keduanya adalah bawaan paket — lihat *Dua default paket yang diubah*.
 
 ## Verifikasi cepat
 
@@ -1559,7 +1770,7 @@ Output yang diharapkan:
 
 ```
 model-role: App\Models\Role
-izin: Access:AdminPanel, Create:Role, Create:User, Delete:Role, Delete:User, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:Role, View:User, ViewAny:Activity, ViewAny:Role, ViewAny:User
+izin: Access:AdminPanel, Create:Role, Create:User, Delete:Role, Delete:User, Reload:Octane, Restore:Backup, Update:Role, Update:User, View:Activity, View:Backups, View:Octane, View:Role, View:User, ViewAny:Activity, ViewAny:Role, ViewAny:User
 role: admin, developer, guru, karyawan, murid, super-admin
 admin-role: super-admin
 akses-panel: true
@@ -1695,3 +1906,40 @@ excel    : kertas letter, font_dir fonts (default paket, BUKAN config)
 Dua baris terakhir **memang seharusnya berbeda**, dan itu bukan salah konfigurasi: phpspreadsheet memanggil `new \Dompdf\Dompdf()` tanpa argumen sehingga tidak pernah melihat `config/dompdf.php`. Baca *Dua jalur PDF, satu di antaranya buta terhadap config* sebelum menyimpulkan config-nya rusak.
 
 `php : true` berarti config-nya dilonggarkan dan aplikasi mengeksekusi PHP dari dalam HTML yang dirender — kembalikan ke `false` sebelum apa pun yang lain.
+
+### Octane
+
+Keempat baris di bawah juga ditampilkan `/admin/octane` beserta tujuh pemeriksaan lain, jadi buka halaman itu kalau panelnya bisa diakses. Blok ini untuk saat panelnya tidak bisa dibuka, atau di dalam skrip deploy.
+
+```bash
+php artisan config:clear
+php artisan tinker --execute='
+echo "server   : ".config("octane.server")." | biner: ".(is_executable(base_path("frankenphp")) ? "ada" : "TIDAK ADA").PHP_EOL;
+echo "reset izin: ".var_export(config("permission.register_octane_reset_listener"), true).PHP_EOL;
+$l = config("octane.listeners.".Laravel\Octane\Contracts\OperationTerminated::class, []);
+echo "putus DB : ".var_export(in_array(Laravel\Octane\Listeners\DisconnectFromDatabases::class, $l), true).PHP_EOL;
+echo "sandbox  : ".var_export(in_array(Laravel\Octane\Listeners\CreateConfigurationSandbox::class, config("octane.listeners.".Laravel\Octane\Events\RequestReceived::class, [])), true).PHP_EOL;
+'
+```
+
+Output yang diharapkan:
+
+```
+server   : frankenphp | biner: ada
+reset izin: true
+putus DB : true
+sandbox  : true
+```
+
+Keempatnya wajib. `reset izin: false` berarti izin yang dicabut lewat panel tetap berlaku sampai worker didaur ulang; `putus DB : false` berarti restore backup tidak terlihat oleh worker yang sudah terhubung. Keduanya adalah **bawaan paket**, jadi `false` berarti seseorang mengembalikannya, bukan bahwa instalasinya kurang. `OctaneConfigurationTest` sudah merah lebih dulu di kedua kasus.
+
+`biner: TIDAK ADA` bukan tanda config rusak — binernya di-gitignore dan tidak ikut `git pull`. Jalankan `php artisan octane:install --server=frankenphp`.
+
+Uji sungguhan bahwa ia melayani request (server perlu jalan di terminal lain):
+
+```bash
+php artisan octane:start --port=8000 &
+for i in 1 2 3; do curl -s -o /dev/null -w "req$i status=%{http_code} %{time_total}s\n" http://127.0.0.1:8000/admin/login; done
+```
+
+Request pertama selalu paling lambat karena worker baru boot; request berikutnya turun tajam — di mesin ini 0.16s lalu 0.02s. **Kalau request ke-2 dan ke-3 tidak lebih cepat, Octane tidak benar-benar menahan aplikasi di memori** dan ada yang mem-boot ulang tiap request.
